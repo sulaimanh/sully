@@ -1124,24 +1124,24 @@ function IssueCard({
     >
       <div className="flex items-center gap-2">
         <button
-          className="font-mono text-[11px] font-medium text-brass-300 hover:underline"
+          className="shrink-0 font-mono text-[11px] font-medium text-brass-300 hover:underline"
           onClick={() => useApp.getState().openBrowser(issue.url)}
         >
           {issue.identifier}
         </button>
         {repoName ? (
-          <span className="rounded bg-ink-700 px-1.5 py-px font-mono text-[10px] text-ink-200">
+          <span className="min-w-0 truncate rounded bg-ink-700 px-1.5 py-px font-mono text-[10px] text-ink-200">
             {repoName}
           </span>
         ) : (
           <span
-            className="flex items-center gap-1 rounded bg-terra-500/15 px-1.5 py-px font-mono text-[10px] text-terra-400"
+            className="flex min-w-0 shrink items-center gap-1 whitespace-nowrap rounded bg-terra-500/15 px-1.5 py-px font-mono text-[10px] text-terra-400"
             title="Map this ticket's team or project to a repo in Settings"
           >
-            <TriangleAlert size={9} /> no repo
+            <TriangleAlert size={9} className="shrink-0" /> no repo
           </span>
         )}
-        <span className="ml-auto flex items-center gap-2 text-[10px] text-ink-400">
+        <span className="ml-auto flex shrink-0 items-center gap-2 whitespace-nowrap text-[10px] text-ink-400">
           {typeof issue.costUsd === 'number' && issue.costUsd >= 0.01 && (
             <span className="font-mono" title="Total AI spend across this ticket's sessions">
               ${issue.costUsd.toFixed(2)}
@@ -1156,11 +1156,11 @@ function IssueCard({
       {issue.prUrl &&
         ((issue.ciStatus && issue.ciStatus.state !== 'none') ||
           (issue.prReview && issue.prReview !== 'none')) && (
-          <div className="mt-2 flex items-center gap-1.5">
+          <div className="mt-2 flex flex-wrap items-center gap-1.5">
             {issue.ciStatus && issue.ciStatus.state !== 'none' && (
               <span
                 className={cn(
-                  'rounded px-1.5 py-px font-mono text-[10px]',
+                  'whitespace-nowrap rounded px-1.5 py-px font-mono text-[10px]',
                   issue.ciStatus.state === 'fail' && 'bg-terra-500/15 text-terra-400',
                   issue.ciStatus.state === 'pending' && 'bg-ink-700 text-ink-300',
                   issue.ciStatus.state === 'pass' && 'bg-sage-500/15 text-sage-400'
@@ -1182,7 +1182,7 @@ function IssueCard({
             {issue.prReview && issue.prReview !== 'none' && (
               <span
                 className={cn(
-                  'rounded px-1.5 py-px font-mono text-[10px]',
+                  'whitespace-nowrap rounded px-1.5 py-px font-mono text-[10px]',
                   issue.prReview === 'approved' && 'bg-sage-500/15 text-sage-400',
                   issue.prReview === 'changes_requested' && 'bg-terra-500/15 text-terra-400',
                   issue.prReview === 'review_required' && 'bg-ink-700 text-ink-300'
@@ -1268,14 +1268,14 @@ function IssueCard({
         </p>
       )}
 
-      <div className="mt-2.5 flex items-center gap-1.5">
+      <div className="mt-2.5 flex flex-wrap items-center gap-1.5">
         {running && (
-          <span className="flex items-center gap-1.5 text-[10.5px] text-brass-300">
+          <span className="flex items-center gap-1.5 whitespace-nowrap text-[10.5px] text-brass-300">
             <Vu /> working
           </span>
         )}
         {issue.phase === 'plan_questions' && !running && (
-          <span className="flex items-center gap-1 rounded bg-brass-500/15 px-1.5 py-px text-[10.5px] text-brass-300">
+          <span className="flex items-center gap-1 whitespace-nowrap rounded bg-brass-500/15 px-1.5 py-px text-[10.5px] text-brass-300">
             <CircleHelp size={10} /> has questions
           </span>
         )}

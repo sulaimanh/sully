@@ -65,7 +65,7 @@ export function Button({
       disabled={disabled}
       title={title}
       className={cn(
-        'inline-flex items-center gap-1.5 rounded-md px-2.5 py-1 text-[12px] font-bold transition-all duration-150 disabled:cursor-not-allowed disabled:opacity-40',
+        'inline-flex items-center gap-1.5 whitespace-nowrap rounded-md px-2.5 py-1 text-[12px] font-bold transition-all duration-150 disabled:cursor-not-allowed disabled:opacity-40',
         variant === 'primary' && 'bg-brass-500 text-ink-950 hover:bg-brass-400 active:scale-[0.98]',
         variant === 'ghost' &&
           'hairline-strong border border-solid text-ink-200 hover:bg-ink-700 hover:text-ink-50',
