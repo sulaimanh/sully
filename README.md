@@ -1,4 +1,8 @@
-# Sully
+<p align="center">
+  <img src="resources/icon.png" alt="Sully logo" width="128" />
+</p>
+
+<h1 align="center">Sully</h1>
 
 A macOS desktop app that drives your dev workflow from Linear. Tickets in a "Planning" column get an AI-drafted implementation plan posted back as a Linear comment; you approve; a headless coding session implements it, opens the PR, and moves the ticket to review. It can also auto-review PRs where you're the requested reviewer or assignee.
 
