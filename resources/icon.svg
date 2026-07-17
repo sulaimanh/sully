@@ -1,0 +1,67 @@
+<svg width="1024" height="1024" viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#242e3b"/>
+      <stop offset="0.55" stop-color="#141a22"/>
+      <stop offset="1" stop-color="#0b0f14"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="0.5" cy="0.42" r="0.62">
+      <stop offset="0" stop-color="#388bfd" stop-opacity="0.32"/>
+      <stop offset="0.6" stop-color="#388bfd" stop-opacity="0.10"/>
+      <stop offset="1" stop-color="#388bfd" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="stroke" x1="0" y1="0" x2="0.35" y2="1">
+      <stop offset="0" stop-color="#a5d6ff"/>
+      <stop offset="0.5" stop-color="#58a6ff"/>
+      <stop offset="1" stop-color="#1f6feb"/>
+    </linearGradient>
+    <linearGradient id="rim" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ffffff" stop-opacity="0.14"/>
+      <stop offset="0.25" stop-color="#ffffff" stop-opacity="0.03"/>
+      <stop offset="1" stop-color="#ffffff" stop-opacity="0"/>
+    </linearGradient>
+    <filter id="soft" x="-40%" y="-40%" width="180%" height="180%">
+      <feGaussianBlur stdDeviation="26"/>
+    </filter>
+    <clipPath id="squircle">
+      <rect x="100" y="100" width="824" height="824" rx="186" ry="186"/>
+    </clipPath>
+  </defs>
+
+  <g clip-path="url(#squircle)">
+    <rect x="100" y="100" width="824" height="824" fill="url(#bg)"/>
+    <rect x="100" y="100" width="824" height="824" fill="url(#glow)"/>
+
+    <!-- soft glow behind the mark -->
+    <g filter="url(#soft)" opacity="0.55">
+      <path d="M 665 350
+               C 653 272 587 238 514 238
+               C 422 238 358 291 358 364
+               C 358 441 421 475 514 500
+               C 611 527 666 565 666 644
+               C 666 723 597 778 508 778
+               C 425 778 363 735 353 664"
+            fill="none" stroke="#388bfd" stroke-width="86" stroke-linecap="round"/>
+    </g>
+
+    <!-- the S flow line -->
+    <path d="M 665 350
+             C 653 272 587 238 514 238
+             C 422 238 358 291 358 364
+             C 358 441 421 475 514 500
+             C 611 527 666 565 666 644
+             C 666 723 597 778 508 778
+             C 425 778 363 735 353 664"
+          fill="none" stroke="url(#stroke)" stroke-width="74" stroke-linecap="round"/>
+
+    <!-- terminal nodes: workflow endpoints -->
+    <circle cx="665" cy="350" r="62" fill="url(#stroke)"/>
+    <circle cx="665" cy="350" r="27" fill="#0d1117"/>
+    <circle cx="353" cy="664" r="62" fill="url(#stroke)"/>
+    <circle cx="353" cy="664" r="27" fill="#0d1117"/>
+
+    <!-- top rim highlight -->
+    <rect x="100" y="100" width="824" height="824" rx="186" ry="186"
+          fill="none" stroke="url(#rim)" stroke-width="6"/>
+  </g>
+</svg>

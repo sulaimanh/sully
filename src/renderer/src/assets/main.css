@@ -1,0 +1,334 @@
+@import '@fontsource/fraunces/400.css';
+@import '@fontsource/fraunces/500.css';
+@import '@fontsource/fraunces/600.css';
+@import '@fontsource/atkinson-hyperlegible/400.css';
+@import '@fontsource/atkinson-hyperlegible/700.css';
+@import '@fontsource/red-hat-mono/400.css';
+@import '@fontsource/red-hat-mono/500.css';
+@import 'tailwindcss';
+
+@theme {
+  /* GitHub Dark (Primer dark default): ink ladder maps to Primer's gray scale
+     (canvas #0d1117 → fg #f0f6fc), brass carries the blue accent, sage/terra/
+     mist/plan carry success/danger/cyan/purple */
+  --color-ink-950: #0d1117;
+  --color-ink-900: #161b22;
+  --color-ink-850: #1c2128;
+  --color-ink-800: #21262d;
+  --color-ink-700: #30363d;
+  --color-ink-600: #484f58;
+  --color-ink-500: #545d68;
+  --color-ink-400: #6e7681;
+  --color-ink-300: #8b949e;
+  --color-ink-200: #b1bac4;
+  --color-ink-100: #c9d1d9;
+  --color-ink-50: #f0f6fc;
+
+  --color-brass-600: #1f6feb;
+  --color-brass-500: #388bfd;
+  --color-brass-400: #58a6ff;
+  --color-brass-300: #79c0ff;
+  --color-brass-glow: rgba(56, 139, 253, 0.15);
+
+  --color-sage-500: #2ea043;
+  --color-sage-400: #3fb950;
+  --color-terra-500: #da3633;
+  --color-terra-400: #f85149;
+  --color-mist-400: #39c5cf;
+  --color-plan-400: #a371f7;
+
+  /* terminal "screen": deeper than any chrome surface so a pty region is
+     unmistakable — must match themeFor() in TerminalPane.tsx */
+  --color-term: #010409;
+
+  --font-display: 'Fraunces', 'Georgia', serif;
+  --font-sans: 'Atkinson Hyperlegible', 'Avenir', system-ui, sans-serif;
+  --font-mono: 'Red Hat Mono', 'SF Mono', monospace;
+}
+
+/* GitHub Light (Primer light default): the ink scale is ordered
+   background→foreground, so light mode re-maps it to Primer's light grays
+   and darkens the accents for contrast */
+html.light {
+  --color-ink-950: #ffffff;
+  --color-ink-900: #f6f8fa;
+  --color-ink-850: #eaeef2;
+  --color-ink-800: #d8dee4;
+  --color-ink-700: #d0d7de;
+  --color-ink-600: #afb8c1;
+  --color-ink-500: #8c959f;
+  --color-ink-400: #6e7781;
+  --color-ink-300: #57606a;
+  --color-ink-200: #424a53;
+  --color-ink-100: #24292f;
+  --color-ink-50: #1f2328;
+
+  --color-brass-600: #218bff;
+  --color-brass-500: #0969da;
+  --color-brass-400: #0550ae;
+  --color-brass-300: #033d8b;
+  --color-brass-glow: rgba(9, 105, 218, 0.12);
+
+  --color-sage-500: #2da44e;
+  --color-sage-400: #1a7f37;
+  --color-terra-500: #cf222e;
+  --color-terra-400: #a40e26;
+  --color-mist-400: #1b7c83;
+  --color-plan-400: #8250df;
+
+  /* light terminal screen: pure white, at least as bright as any chrome
+     surface, reads as an inset display — must match themeFor() in
+     TerminalPane.tsx */
+  --color-term: #ffffff;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  overflow: hidden;
+}
+
+body {
+  background: var(--color-ink-950);
+  color: var(--color-ink-100);
+  font-family: var(--font-sans);
+  font-size: 13px;
+  letter-spacing: 0.01em;
+  -webkit-font-smoothing: antialiased;
+  user-select: none;
+  cursor: default;
+}
+
+::selection {
+  background: rgba(56, 139, 253, 0.4);
+}
+html.light ::selection {
+  background: rgba(84, 174, 255, 0.4);
+}
+
+/* keeps plan text visibly highlighted while the selection menu holds focus */
+::highlight(plan-selection) {
+  background-color: rgba(56, 139, 253, 0.4);
+}
+html.light ::highlight(plan-selection) {
+  background-color: rgba(84, 174, 255, 0.4);
+}
+
+/* macOS hiddenInset titlebar: make the top strip draggable */
+.titlebar-drag {
+  -webkit-app-region: drag;
+}
+.titlebar-drag button,
+.titlebar-drag a,
+.titlebar-drag input,
+.titlebar-drag .titlebar-no-drag {
+  -webkit-app-region: no-drag;
+}
+
+/* Warm grain + vignette atmosphere over the whole app */
+.atmosphere::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 50;
+  opacity: 0.05;
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 240 240' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+}
+.atmosphere::after {
+  content: '';
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 49;
+  background:
+    radial-gradient(1200px 500px at 20% -10%, rgba(56, 139, 253, 0.05), transparent 60%),
+    radial-gradient(900px 600px at 110% 110%, rgba(57, 197, 207, 0.04), transparent 60%);
+}
+html.light .atmosphere::before {
+  opacity: 0.035;
+}
+html.light .atmosphere::after {
+  background:
+    radial-gradient(1200px 500px at 20% -10%, rgba(9, 105, 218, 0.05), transparent 60%),
+    radial-gradient(900px 600px at 110% 110%, rgba(27, 124, 131, 0.04), transparent 60%);
+}
+
+/* hairline borders — strong enough to edge a card against the panel behind
+   it, quiet enough to stay chrome rather than content */
+.hairline {
+  border-color: #30363d;
+}
+.hairline-strong {
+  border-color: #484f58;
+}
+html.light .hairline {
+  border-color: #d0d7de;
+}
+html.light .hairline-strong {
+  border-color: #afb8c1;
+}
+
+/* shade over a terminal pane that doesn't own the keyboard: on the dark term
+   screen a black scrim dims the content; on the light screen a gray tint */
+.term-shade {
+  background: rgba(0, 0, 0, 0.35);
+}
+html.light .term-shade {
+  background: rgba(31, 35, 40, 0.07);
+}
+
+/* VU-meter pulse for running sessions */
+@keyframes vu {
+  0%,
+  100% {
+    transform: scaleY(0.3);
+  }
+  30% {
+    transform: scaleY(1);
+  }
+  60% {
+    transform: scaleY(0.55);
+  }
+}
+.vu span {
+  display: inline-block;
+  width: 2.5px;
+  border-radius: 1px;
+  background: var(--color-brass-400);
+  transform-origin: bottom;
+  animation: vu 1.1s ease-in-out infinite;
+}
+.vu span:nth-child(2) {
+  animation-delay: 0.18s;
+}
+.vu span:nth-child(3) {
+  animation-delay: 0.36s;
+}
+.vu span:nth-child(4) {
+  animation-delay: 0.52s;
+}
+
+@keyframes fadeUp {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+.fade-up {
+  /* 'backwards', not 'both': a retained transform would turn this element
+     into the containing block for fixed-position descendants */
+  animation: fadeUp 0.35s cubic-bezier(0.22, 1, 0.36, 1) backwards;
+}
+
+@keyframes breathe {
+  0%,
+  100% {
+    opacity: 0.55;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+.breathe {
+  animation: breathe 2.4s ease-in-out infinite;
+}
+
+/* scrollbars */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(110, 118, 129, 0.4);
+  border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(110, 118, 129, 0.55);
+}
+html.light ::-webkit-scrollbar-thumb {
+  background: rgba(140, 149, 159, 0.4);
+}
+html.light ::-webkit-scrollbar-thumb:hover {
+  background: rgba(140, 149, 159, 0.6);
+}
+::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+.selectable {
+  user-select: text;
+  cursor: auto;
+}
+
+/* markdown plan rendering */
+.prose-plan {
+  user-select: text;
+  line-height: 1.6;
+}
+.prose-plan h1,
+.prose-plan h2,
+.prose-plan h3 {
+  font-family: var(--font-display);
+  font-weight: 500;
+  color: var(--color-ink-50);
+  margin: 1.2em 0 0.4em;
+}
+.prose-plan h1 {
+  font-size: 1.5em;
+}
+.prose-plan h2 {
+  font-size: 1.25em;
+}
+.prose-plan h3 {
+  font-size: 1.1em;
+}
+.prose-plan p,
+.prose-plan li {
+  margin: 0.4em 0;
+  color: var(--color-ink-100);
+}
+.prose-plan ul,
+.prose-plan ol {
+  padding-left: 1.4em;
+}
+.prose-plan ul {
+  list-style: disc;
+}
+.prose-plan ol {
+  list-style: decimal;
+}
+.prose-plan code {
+  font-family: var(--font-mono);
+  font-size: 0.9em;
+  background: rgba(110, 118, 129, 0.4);
+  padding: 0.1em 0.35em;
+  border-radius: 4px;
+}
+html.light .prose-plan code {
+  background: rgba(175, 184, 193, 0.2);
+}
+.prose-plan pre {
+  background: var(--color-ink-900);
+  border: 1px solid #30363d;
+  border-radius: 8px;
+  padding: 0.8em 1em;
+  overflow-x: auto;
+  margin: 0.6em 0;
+}
+html.light .prose-plan pre {
+  border-color: #d0d7de;
+}
+.prose-plan pre code {
+  background: transparent;
+  padding: 0;
+}
+.prose-plan a {
+  color: var(--color-brass-300);
+  text-decoration: underline;
+}
