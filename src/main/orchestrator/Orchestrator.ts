@@ -33,9 +33,7 @@ import {
   fetchIssueComments,
   fetchIssueState,
   fetchIssuesInStates,
-  fetchViewer,
   moveIssue,
-  postComment,
   type LinearIssueNode
 } from '../linear/operations'
 import { createPr, failedRunLogs, prChecks, prForBranch, prReviewComments } from '../github/gh'
@@ -45,15 +43,6 @@ const PLAN_MARKER = (issueId: string): string => `<!-- sully:plan issueId=${issu
 // (never double-plan), so scanning matches the old token too
 const LEGACY_PLAN_MARKER = (issueId: string): string =>
   `<!-- conductor:plan issueId=${issueId} v=1 -->`
-// replies posted by Sully in the plan thread carry one marker per feedback
-// comment they answered, so "handled" survives restarts and cleared state
-const REPLY_MARKER = (commentId: string): string => `<!-- sully:reply to=${commentId} -->`
-const REPLY_MARKER_RE = /<!-- sully:reply to=([\w-]+) -->/g
-// sully replies carry the claude conversation id, so follow-ups can --resume
-// it (skipping re-exploration) even after a restart or cleared local state
-const SESSION_MARKER = (id: string): string => `<!-- sully:session id=${id} -->`
-const SESSION_MARKER_RE = /<!-- sully:session id=([\w-]+) -->/g
-
 // Resuming replays the whole prior conversation as fresh input (the prompt
 // cache is long cold by the time a follow-up arrives), so past this transcript
 // size a resume costs more than starting over — observed $6-7 per reprompt on
@@ -147,10 +136,9 @@ function parsePlanQuestions(raw: string): PlanQuestion[] | null {
 type ColumnKind = BoardColumn
 
 /**
- * Linear-driven state machine. Linear columns are the *trigger*; local state +
- * a hidden marker in the plan comment are the *dedupe*. Every post-session step
- * (comment, move, PR create) checks before acting, so restart recovery is just
- * re-running the steps.
+ * Linear-driven state machine. Linear columns are the *trigger*; local state is
+ * the *dedupe*. Every post-session step (move, PR create) checks before acting,
+ * so restart recovery is just re-running the steps.
  */
 export class Orchestrator extends EventEmitter {
   private store = new IssueStateStore()
@@ -160,24 +148,6 @@ export class Orchestrator extends EventEmitter {
   private busy = new Set<string>()
   /** HEAD sha captured before each reprompt session, to detect whether it changed code */
   private repromptBaseSha = new Map<string, string>()
-  /** Linear user id of the person running this app — only their comments trigger actions */
-  private viewerId?: string
-
-  /**
-   * Teammates chat on tickets too; only comments from the app's own Linear
-   * user are directives. Unknown viewer (fetch failed) means trigger nothing —
-   * unhandled comments re-detect on a later poll once the viewer resolves.
-   */
-  private async ensureViewerId(): Promise<string | undefined> {
-    if (!this.viewerId) {
-      try {
-        this.viewerId = (await fetchViewer()).id
-      } catch {
-        // leave undefined — retried next poll
-      }
-    }
-    return this.viewerId
-  }
 
   start(): void {
     processManager.on('finished', (session: Session) => {
@@ -420,10 +390,8 @@ export class Orchestrator extends EventEmitter {
           // unparked into Planning — an explicit plan request; anything left
           // over from before the ticket was parked is stale (same reset as
           // dragging a plan-ready ticket back to Planning)
-          local.planCommentId = undefined
           local.planBody = undefined
           local.planQuestions = undefined
-          local.codeFeedbackCutoff = undefined
           local.codingSessionId = undefined
           local.phase = 'planning'
           this.save(local)
@@ -437,10 +405,8 @@ export class Orchestrator extends EventEmitter {
           if (draggedBack) {
             // user dragged it back: explicit re-plan request. A new plan means
             // any old coding attempt is stale — retries must not resume it.
-            local.planCommentId = undefined
             local.planBody = undefined
             local.planQuestions = undefined
-            local.codeFeedbackCutoff = undefined
             local.codingSessionId = undefined
             local.phase = 'planning'
             this.save(local)
@@ -480,9 +446,6 @@ export class Orchestrator extends EventEmitter {
             local.planBody = fileText
         }
         this.save(local)
-        if (act && local.phase === 'plan_ready' && local.planCommentId) {
-          await this.checkPlanFeedback(local)
-        }
         break
       }
       case 'inProgress':
@@ -510,13 +473,9 @@ export class Orchestrator extends EventEmitter {
       case 'inReview':
         if (local.phase !== 'in_review' && local.phase !== 'error') local.phase = 'in_review'
         this.save(local)
-        if (act && local.phase === 'in_review') {
-          await this.checkReprompt(local)
-        }
         // CI/review status is read-only board sync — it refreshes even with
-        // automation off; only the fix sessions require act. User comments
-        // take priority: skip when checkReprompt spawned a session.
-        if (!local.activeSessionId && local.phase === 'in_review') {
+        // automation off; only the fix sessions require act.
+        if (local.phase === 'in_review') {
           await this.checkCiAutoFix(local, act)
         }
         break
@@ -600,12 +559,12 @@ export class Orchestrator extends EventEmitter {
   }
 
   /** Legacy: plans used to be posted as Linear comments — read-only fallback now. */
-  private async findPlanComment(issueId: string): Promise<{ id: string; body: string } | null> {
+  private async findPlanComment(issueId: string): Promise<string | null> {
     try {
       const comments = await fetchIssueComments(issueId)
       const markers = [PLAN_MARKER(issueId), LEGACY_PLAN_MARKER(issueId)]
       const found = [...comments].reverse().find((c) => markers.some((m) => c.body.includes(m)))
-      return found ? { id: found.id, body: found.body } : null
+      return found?.body ?? null
     } catch {
       return null
     }
@@ -645,8 +604,7 @@ export class Orchestrator extends EventEmitter {
     }
     const comment = await this.findPlanComment(issue.issueId)
     if (comment) {
-      issue.planCommentId = comment.id
-      issue.planBody = planTextFromBody(issue.issueId, comment.body)
+      issue.planBody = planTextFromBody(issue.issueId, comment)
       return true
     }
     return false
@@ -757,7 +715,6 @@ export class Orchestrator extends EventEmitter {
       if (!planFile || !fs.existsSync(planFile)) this.writePlanFile(issue, planText)
       issue.planBody = planText
       issue.planQuestions = undefined // answered (or superseded) once a plan exists
-      issue.planCommentId = undefined // a re-plan supersedes any legacy plan comment
 
       const mapping = this.mappingFor(issue.teamId)
       if (mapping) {
@@ -855,73 +812,16 @@ export class Orchestrator extends EventEmitter {
     }
   }
 
-  /**
-   * Legacy (tickets whose plan was posted to Linear by an older app version):
-   * new replies on the plan comment while in Plan ready are feedback: a session
-   * decides question vs. edit, edits the plan file if asked, and writes a reply.
-   * A reply is only "handled" once a Sully reply carrying its marker exists in
-   * Linear, so restarts and cleared state never drop or double-handle feedback.
-   */
-  private async checkPlanFeedback(issue: TrackedIssue): Promise<void> {
-    const settings = settingsStore.get()
-    if (!issue.repoPath || !issue.planCommentId) return
-    if (processManager.runningCount('plan_feedback') >= settings.orchestrator.maxConcurrentPlanning)
-      return
-
-    const viewerId = await this.ensureViewerId()
-    if (!viewerId) return
-
-    const comments = await fetchIssueComments(issue.issueId)
-    const handled = new Set<string>()
-    for (const c of comments) {
-      for (const m of c.body.matchAll(REPLY_MARKER_RE)) handled.add(m[1])
-    }
-    this.recoverChatSessionId(issue, comments)
-    const pending = comments
-      .filter(
-        (c) =>
-          c.parent?.id === issue.planCommentId &&
-          c.user?.id === viewerId &&
-          !c.body.includes('<!-- sully:') &&
-          !handled.has(c.id)
-      )
-      .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
-    if (pending.length === 0) return
-
-    await this.startPlanFeedback(
-      issue,
-      pending.map((c) => c.body),
-      pending.map((c) => c.id)
-    )
-  }
-
   /** User asked about / requested a change to the plan from the app — the chat stays in-app. */
   async planFeedback(issueId: string, message: string): Promise<void> {
     const issue = this.store.get(issueId)
     if (!issue || issue.phase !== 'plan_ready' || issue.activeSessionId || !message.trim()) return
     this.appendChat(issue, 'user', message.trim())
     this.save(issue)
-    await this.startPlanFeedback(issue, [message.trim()], [])
+    await this.startPlanFeedback(issue, [message.trim()])
   }
 
-  /** Cleared local state? Pick the resume id back up from sully's Linear reply markers. */
-  private recoverChatSessionId(
-    issue: TrackedIssue,
-    comments: Array<{ body: string; createdAt: string }>
-  ): void {
-    if (issue.chatSessionId) return
-    const sorted = [...comments].sort((a, b) => a.createdAt.localeCompare(b.createdAt))
-    for (const c of sorted) {
-      for (const m of c.body.matchAll(SESSION_MARKER_RE)) issue.chatSessionId = m[1]
-    }
-  }
-
-  /** Empty commentIds = in-app chat message; non-empty = Linear plan-thread comments. */
-  private async startPlanFeedback(
-    issue: TrackedIssue,
-    comments: string[],
-    commentIds: string[]
-  ): Promise<void> {
+  private async startPlanFeedback(issue: TrackedIssue, comments: string[]): Promise<void> {
     const settings = settingsStore.get()
     if (!issue.repoPath) return
 
@@ -939,7 +839,7 @@ export class Orchestrator extends EventEmitter {
         config.agent === 'claude'
           ? resumableSessionId(issue.worktreePath, issue.chatSessionId)
           : undefined
-      const history = commentIds.length ? [] : (issue.chat ?? []).slice(0, -1)
+      const history = (issue.chat ?? []).slice(0, -1)
       const command = resumeId
         ? buildPlanChatResumeCommand(config, comments.join('\n\n'), resumeId)
         : buildPlanFeedbackCommand(config, issue, comments, issue.worktreePath, history)
@@ -953,7 +853,6 @@ export class Orchestrator extends EventEmitter {
         issueId: issue.issueId,
         issueIdentifier: issue.identifier
       })
-      issue.feedbackCommentIds = commentIds
       issue.activeSessionId = session.id
       issue.lastError = undefined
       this.save(issue)
@@ -964,9 +863,7 @@ export class Orchestrator extends EventEmitter {
 
   private async handleFeedbackFinished(issue: TrackedIssue, session: Session): Promise<void> {
     issue.activeSessionId = undefined
-    const commentIds = issue.feedbackCommentIds ?? []
-    issue.feedbackCommentIds = undefined
-    if (session.status !== 'done' && commentIds.length === 0) {
+    if (session.status !== 'done') {
       // in-app chat cancelled or lost — resolve in the chat, never error the
       // ticket; drop the resume id in case the conversation itself is broken
       issue.chatSessionId = undefined
@@ -978,11 +875,6 @@ export class Orchestrator extends EventEmitter {
           : `_Session ${session.status} — please try again._`
       )
       this.save(issue)
-      return
-    }
-    if (session.status !== 'done') {
-      issue.chatSessionId = undefined
-      this.fail(issue.issueId, sessionFailure('plan feedback', session))
       return
     }
     if (!issue.worktreePath || !issue.planBody) {
@@ -1007,22 +899,15 @@ export class Orchestrator extends EventEmitter {
         : replyText ||
           session.lastText?.trim() ||
           'Looked into it, but produced no answer — please retry.'
-      if (commentIds.length) {
-        const markers = commentIds.map(REPLY_MARKER).join('')
-        const sm = session.agentSessionId ? SESSION_MARKER(session.agentSessionId) : ''
-        // threads are one level deep: reply under the plan comment
-        await postComment(issue.issueId, `${markers}${sm}\n${reply}`, issue.planCommentId)
-      } else {
-        // in-app chat: answer in the app, never in Linear
-        this.appendChat(issue, 'agent', reply)
-      }
+      // the chat lives in the app, never in Linear
+      this.appendChat(issue, 'agent', reply)
       issue.chatSessionId = session.agentSessionId ?? issue.chatSessionId
 
       issue.lastError = undefined
       this.save(issue)
       this.emit('notify', {
         title: `${issue.identifier} ${planChanged ? 'plan updated' : 'plan question answered'}`,
-        body: planChanged ? 'The plan was revised from your comment.' : reply.slice(0, 200),
+        body: planChanged ? 'The plan was revised from your message.' : reply.slice(0, 200),
         view: 'board'
       })
     } finally {
@@ -1040,7 +925,7 @@ export class Orchestrator extends EventEmitter {
     const planFile = path.join(issue.worktreePath, PLAN_FILE_REL)
     if (fs.existsSync(planFile)) return
     let body = issue.planBody
-    if (!body) body = (await this.findPlanComment(issue.issueId))?.body
+    if (!body) body = (await this.findPlanComment(issue.issueId)) ?? undefined
     if (body) this.writePlanFile(issue, planTextFromBody(issue.issueId, body))
   }
 
@@ -1059,55 +944,7 @@ export class Orchestrator extends EventEmitter {
     if (!issue || issue.phase !== 'in_review' || issue.activeSessionId || !prompt.trim()) return
     this.appendChat(issue, 'user', prompt.trim())
     this.save(issue)
-    await this.startReprompt(issue, [prompt.trim()], [])
-  }
-
-  /**
-   * Top-level ticket comments left after coding is done are reprompts: a
-   * session decides question vs. change request, implements + pushes to the PR
-   * branch if asked, and replies on the ticket. Same marker-based handled
-   * tracking as plan feedback, so restarts never drop or double-handle one.
-   */
-  private async checkReprompt(issue: TrackedIssue): Promise<void> {
-    const settings = settingsStore.get()
-    if (!issue.repoPath) return
-    if (processManager.runningCount('reprompt') >= settings.orchestrator.maxConcurrentCoding) return
-
-    // comments predating review (ticket discussion, planning notes) are not
-    // reprompts — anchor the cutoff on first sight and only look after it
-    if (!issue.codeFeedbackCutoff) {
-      issue.codeFeedbackCutoff = new Date().toISOString()
-      this.save(issue)
-      return
-    }
-
-    const viewerId = await this.ensureViewerId()
-    if (!viewerId) return
-
-    const comments = await fetchIssueComments(issue.issueId)
-    const handled = new Set<string>()
-    for (const c of comments) {
-      for (const m of c.body.matchAll(REPLY_MARKER_RE)) handled.add(m[1])
-    }
-    this.recoverChatSessionId(issue, comments)
-    const cutoff = issue.codeFeedbackCutoff
-    const pending = comments
-      .filter(
-        (c) =>
-          !c.parent && // top-level only — plan-thread replies are plan feedback
-          c.user?.id === viewerId &&
-          !c.body.includes('<!-- sully:') &&
-          c.createdAt > cutoff &&
-          !handled.has(c.id)
-      )
-      .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
-    if (pending.length === 0) return
-
-    await this.startReprompt(
-      issue,
-      pending.map((c) => c.body),
-      pending.map((c) => c.id)
-    )
+    await this.startReprompt(issue, [prompt.trim()])
   }
 
   /**
@@ -1243,7 +1080,7 @@ export class Orchestrator extends EventEmitter {
       body: `Auto-fixing (attempt ${attempt}/${max}): ${failedNames.join(', ')}`.slice(0, 200),
       view: 'board'
     })
-    await this.startReprompt(issue, [prompt], [])
+    await this.startReprompt(issue, [prompt])
   }
 
   /**
@@ -1280,17 +1117,12 @@ export class Orchestrator extends EventEmitter {
       `Address ${items.length} selected review comment${items.length === 1 ? '' : 's'}: ${labels.join(', ')}`
     )
     this.save(issue)
-    await this.startReprompt(issue, [prompt], [])
+    await this.startReprompt(issue, [prompt])
   }
 
-  private async startReprompt(
-    issue: TrackedIssue,
-    prompts: string[],
-    commentIds: string[]
-  ): Promise<void> {
+  private async startReprompt(issue: TrackedIssue, prompts: string[]): Promise<void> {
     const settings = settingsStore.get()
     if (!issue.repoPath) return
-    const mapping = this.mappingFor(issue.teamId)
 
     this.busy.add(issue.issueId)
     try {
@@ -1309,7 +1141,7 @@ export class Orchestrator extends EventEmitter {
         config.agent === 'claude'
           ? resumableSessionId(issue.worktreePath, issue.chatSessionId)
           : undefined
-      const history = commentIds.length ? [] : (issue.chat ?? []).slice(0, -1)
+      const history = (issue.chat ?? []).slice(0, -1)
       const command = resumeId
         ? buildRepromptResumeCommand(config, issue, prompts.join('\n\n'), resumeId)
         : buildRepromptCommand(config, issue, prompts, issue.worktreePath, history)
@@ -1323,13 +1155,8 @@ export class Orchestrator extends EventEmitter {
         issueId: issue.issueId,
         issueIdentifier: issue.identifier
       })
-      // a Linear-originated reprompt is visible work — reflect it in Linear;
-      // in-app chat stays in the app, so the ticket does not move
-      if (mapping && commentIds.length) {
-        await this.moveIfStillIn(issue, [mapping.inReviewStateId], mapping.inProgressStateId)
-      }
+      // in-app chat stays in the app, so the ticket does not move in Linear
       issue.phase = 'reprompting'
-      issue.feedbackCommentIds = commentIds
       issue.activeSessionId = session.id
       issue.lastError = undefined
       this.save(issue)
@@ -1340,13 +1167,10 @@ export class Orchestrator extends EventEmitter {
 
   private async handleRepromptFinished(issue: TrackedIssue, session: Session): Promise<void> {
     issue.activeSessionId = undefined
-    const commentIds = issue.feedbackCommentIds ?? []
-    issue.feedbackCommentIds = undefined
     const baseSha = this.repromptBaseSha.get(issue.issueId)
     this.repromptBaseSha.delete(issue.issueId)
-    const mapping = this.mappingFor(issue.teamId)
 
-    if (session.status !== 'done' && commentIds.length === 0) {
+    if (session.status !== 'done') {
       // in-app chat cancelled or lost — resolve in the chat, never error the
       // ticket (it never moved in Linear either); drop the resume id in case
       // the conversation itself is broken
@@ -1360,23 +1184,6 @@ export class Orchestrator extends EventEmitter {
           : `_Session ${session.status} — please try again._`
       )
       this.save(issue)
-      return
-    }
-    if (session.status !== 'done') {
-      // park the ticket back in review; unhandled comments re-detect via markers
-      // (in-app chats never moved the ticket, so there is nothing to move back)
-      issue.chatSessionId = undefined
-      if (commentIds.length) {
-        this.busy.add(issue.issueId)
-        try {
-          if (mapping) {
-            await this.moveIfStillIn(issue, [mapping.inProgressStateId], mapping.inReviewStateId)
-          }
-        } finally {
-          this.busy.delete(issue.issueId)
-        }
-      }
-      this.fail(issue.issueId, sessionFailure('reprompt', session))
       return
     }
 
@@ -1399,9 +1206,6 @@ export class Orchestrator extends EventEmitter {
     this.busy.add(issue.issueId)
     try {
       // in-app chats never moved the ticket, so there is nothing to move back
-      if (mapping && commentIds.length) {
-        await this.moveIfStillIn(issue, [mapping.inProgressStateId], mapping.inReviewStateId)
-      }
       issue.phase = 'in_review'
 
       const reply = changed
@@ -1409,24 +1213,17 @@ export class Orchestrator extends EventEmitter {
         : replyText ||
           session.lastText?.trim() ||
           'Looked into it, but produced no answer — please retry.'
-      if (commentIds.length) {
-        // Linear-originated reprompt: answer where the user asked
-        const markers = commentIds.map(REPLY_MARKER).join('')
-        const sm = session.agentSessionId ? SESSION_MARKER(session.agentSessionId) : ''
-        await postComment(issue.issueId, `${markers}${sm}\n${reply}`, commentIds[0])
-      } else {
-        // in-app chat: answer in the app, never in Linear
-        this.appendChat(issue, 'agent', reply)
-      }
+      // the chat lives in the app, never in Linear
+      this.appendChat(issue, 'agent', reply)
       issue.chatSessionId = session.agentSessionId ?? issue.chatSessionId
 
       issue.lastError = undefined
       this.save(issue)
       this.emit('notify', {
-        title: `${issue.identifier} ${changed ? 'code updated' : 'comment answered'}`,
+        title: `${issue.identifier} ${changed ? 'code updated' : 'question answered'}`,
         body: changed
           ? pushed
-            ? 'Changes pushed to the PR from your comment.'
+            ? 'Changes pushed to the PR.'
             : 'Changes committed, but the push may have failed — check the session log.'
           : reply.slice(0, 200),
         view: 'board'
@@ -1450,7 +1247,6 @@ export class Orchestrator extends EventEmitter {
       if (active?.kind !== 'plan_feedback') return
       const sessionId = issue.activeSessionId
       issue.activeSessionId = undefined
-      issue.feedbackCommentIds = undefined
       await processManager.stop(sessionId)
     }
     this.busy.add(issueId)
@@ -1607,8 +1403,6 @@ export class Orchestrator extends EventEmitter {
         await this.moveIfStillIn(issue, [mapping.inProgressStateId], mapping.inReviewStateId)
       }
       issue.phase = 'in_review'
-      // comments from here on count as reprompts
-      if (!issue.codeFeedbackCutoff) issue.codeFeedbackCutoff = new Date().toISOString()
       issue.lastError = undefined
       this.save(issue)
       this.emit('notify', {

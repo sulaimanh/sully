@@ -203,6 +203,7 @@ export default function BrowserPanel(): ReactElement {
       modalClassName="h-[min(920px,88vh)] w-[min(1280px,92vw)] min-h-[360px] min-w-[480px]"
       minWidth={480}
       minHeight={360}
+      onClose={closeBrowser}
     >
       {/* data-browser-panel: the ⌘W handler checks focus against this wrapper */}
       <div data-browser-panel className="flex min-h-0 flex-1 flex-col">

@@ -379,6 +379,7 @@ export default function NewTicketDialog({ onClose }: { onClose: () => void }): R
       modalClassName="h-[min(980px,92vh)] w-[min(1100px,92vw)] min-h-[520px] min-w-[560px]"
       minWidth={560}
       minHeight={520}
+      onClose={onClose}
     >
       <header className="hairline flex items-center justify-between border-b px-6 py-4">
         <div>

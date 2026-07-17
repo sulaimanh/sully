@@ -7,6 +7,7 @@ import type {
   CredentialStatus,
   ErrorSource,
   ErrorTrackingIssue,
+  IssueComment,
   StateSnapshot
 } from '../shared/types'
 import { IPC } from '../shared/ipc'
@@ -30,10 +31,12 @@ import { devServerManager } from './process/DevServerManager'
 import { deployManager } from './process/DeployManager'
 import {
   createIssue,
+  fetchIssueComments,
   fetchIssueCreateMeta,
   fetchTeams,
   fetchViewer,
-  fetchWorkflowStates
+  fetchWorkflowStates,
+  postComment
 } from './linear/operations'
 import { ghAuthStatus } from './github/gh'
 import { loginMcpServer, runDoctor } from './doctor'
@@ -129,6 +132,19 @@ export function registerIpc(): void {
     orchestrator.pollNow()
     return created
   })
+  ipcMain.handle(IPC.linearIssueComments, async (_e, issueId: string): Promise<IssueComment[]> => {
+    const comments = await fetchIssueComments(issueId)
+    return comments.map((c) => ({
+      id: c.id,
+      body: c.body,
+      createdAt: c.createdAt,
+      parentId: c.parent?.id,
+      authorName: c.user ? c.user.displayName || c.user.name : undefined
+    }))
+  })
+  ipcMain.handle(IPC.linearPostComment, (_e, issueId: string, body: string, parentId?: string) =>
+    postComment(issueId, body, parentId)
+  )
   ipcMain.handle(IPC.skillsList, () => listGlobalSkills())
   ipcMain.handle(IPC.mcpServersList, () => listGlobalMcpServerNames())
   ipcMain.handle(IPC.mcpLogin, (_e, name: string) => loginMcpServer(name))
@@ -171,6 +187,7 @@ export function registerIpc(): void {
   ipcMain.handle(IPC.sessionReadLog, (_e, id: string, fromByte: number) =>
     processManager.readLog(id, fromByte)
   )
+  ipcMain.handle(IPC.sessionReadEvents, (_e, id: string) => processManager.readEvents(id))
 
   // embedded terminal: ptys live here so they survive renderer reloads
   ipcMain.handle(IPC.termCreate, (_e, cwd?: string) => ptyManager.create(cwd))

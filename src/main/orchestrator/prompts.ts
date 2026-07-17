@@ -17,10 +17,10 @@ export const PLAN_QUESTIONS_FILE_REL = '.sully/questions.json'
 // guessing — a wrong assumption here produces a confidently wrong plan.
 const PLAN_QUESTIONS_CONTRACT = `If the ticket is ambiguous in a way that would materially change the plan (unclear requirements, several plausible approaches, missing context you cannot resolve from the codebase or the ticket), do NOT guess and do NOT write ${PLAN_FILE_REL}. Instead write your blocking questions as JSON to ${PLAN_QUESTIONS_FILE_REL} (create directories as needed) and stop: an array where each element has "question" (one specific question), "context" (brief — what you found and why the answer changes the plan), and optionally "options" (2-4 plausible answers). The file must contain only valid JSON — no code fences or surrounding prose. The user's answers arrive in a follow-up turn. Only ask questions whose answers change the plan; resolve everything else from the codebase yourself.`
 
-// Replies land as Linear comments read by non-engineers reviewing the ticket,
-// so they must read like a teammate's quick update, not an engineering report.
+// Replies are shown in the app's ticket chat, possibly to non-engineers, so
+// they must read like a teammate's quick update, not an engineering report.
 const REPLY_STYLE =
-  'The reply is posted as a Linear comment for the person who left the feedback: keep it brief and to the point — a few plain sentences covering only what they need to know (what changed and anything that affects them). No headings, no code blocks, no file paths, no root-cause essays, no verification or test logs.'
+  'The reply is shown to the person who left the feedback: keep it brief and to the point — a few plain sentences covering only what they need to know (what changed and anything that affects them). No headings, no code blocks, no file paths, no root-cause essays, no verification or test logs.'
 
 // Built-in prompts are skill-free so the app works for teammates without
 // custom Claude skills installed. A configured `skill` replaces the lead-in.

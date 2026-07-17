@@ -313,6 +313,30 @@ export class ProcessManager extends EventEmitter {
     }
   }
 
+  /**
+   * Rebuild normalized display events from the on-disk log — for sessions
+   * that streamed in a previous app run, where the renderer's in-memory
+   * event buffer is empty.
+   */
+  readEvents(id: string, maxEvents = 2000): StreamEvent[] {
+    const session = this.get(id)
+    if (!session) return []
+    let content: string
+    try {
+      const stat = fs.statSync(session.logFile)
+      // tail the file: display caps at maxEvents anyway, and logs can be huge
+      const fromByte = Math.max(0, stat.size - 4 * 1024 * 1024)
+      content = this.readLog(id, fromByte).content
+    } catch {
+      return []
+    }
+    const events: StreamEvent[] = []
+    for (const line of content.split('\n')) {
+      events.push(...parseLine(line).events)
+    }
+    return events.slice(-maxEvents)
+  }
+
   readLog(id: string, fromByte = 0): { content: string; size: number } {
     const session = this.get(id)
     if (!session) return { content: '', size: 0 }

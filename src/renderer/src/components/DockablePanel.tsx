@@ -76,7 +76,7 @@ export function DockControls(): ReactElement | null {
   )
 }
 
-function DragHandle({
+export function DragHandle({
   className,
   onStart,
   onMove
@@ -124,6 +124,7 @@ export default function DockablePanel({
   modalClassName,
   minWidth = 480,
   minHeight = 360,
+  onClose,
   children
 }: {
   /** stable key the panel's layout is persisted under */
@@ -132,6 +133,8 @@ export default function DockablePanel({
   modalClassName: string
   minWidth?: number
   minHeight?: number
+  /** dismiss on backdrop click — modal mode only, docked modes have no backdrop */
+  onClose?: () => void
   children: ReactNode
 }): ReactElement {
   const [layout, setLayout] = useState<PanelLayout>(() => loadLayout(id))
@@ -195,7 +198,14 @@ export default function DockablePanel({
   }
 
   return createPortal(
-    <div className="fixed inset-0 z-[60] flex items-center justify-center bg-ink-950/80 p-10 backdrop-blur-sm">
+    <div
+      // pointerdown (not click) so a drag that starts inside the panel and
+      // ends on the backdrop — e.g. selecting text — doesn't dismiss it
+      onPointerDown={(e) => {
+        if (onClose && e.target === e.currentTarget) onClose()
+      }}
+      className="fixed inset-0 z-[60] flex items-center justify-center bg-ink-950/80 p-10 backdrop-blur-sm"
+    >
       <div
         ref={panelRef}
         style={{

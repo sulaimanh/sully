@@ -14,6 +14,7 @@ import type {
   DoctorReport,
   ErrorSource,
   ErrorTrackingIssue,
+  IssueComment,
   IssueCreateMeta,
   LinearTeam,
   LinearWorkflowState,
@@ -51,6 +52,10 @@ const api = {
     ipcRenderer.invoke(IPC.linearIssueCreateMeta, teamId),
   createLinearIssue: (input: CreateIssueInput): Promise<CreatedIssue> =>
     ipcRenderer.invoke(IPC.linearCreateIssue, input),
+  linearIssueComments: (issueId: string): Promise<IssueComment[]> =>
+    ipcRenderer.invoke(IPC.linearIssueComments, issueId),
+  linearPostComment: (issueId: string, body: string, parentId?: string): Promise<void> =>
+    ipcRenderer.invoke(IPC.linearPostComment, issueId, body, parentId),
   listSkills: (): Promise<string[]> => ipcRenderer.invoke(IPC.skillsList),
   listMcpServers: (): Promise<string[]> => ipcRenderer.invoke(IPC.mcpServersList),
   mcpLogin: (name: string): Promise<DoctorCheck> => ipcRenderer.invoke(IPC.mcpLogin, name),
@@ -76,6 +81,8 @@ const api = {
   stopSession: (id: string): Promise<void> => ipcRenderer.invoke(IPC.sessionStop, id),
   readSessionLog: (id: string, fromByte: number): Promise<{ content: string; size: number }> =>
     ipcRenderer.invoke(IPC.sessionReadLog, id, fromByte),
+  readSessionEvents: (id: string): Promise<StreamEvent[]> =>
+    ipcRenderer.invoke(IPC.sessionReadEvents, id),
   termCreate: (cwd?: string): Promise<TerminalInfo> => ipcRenderer.invoke(IPC.termCreate, cwd),
   termCreateForIssue: (issueId: string): Promise<TerminalInfo> =>
     ipcRenderer.invoke(IPC.termCreateForIssue, issueId),

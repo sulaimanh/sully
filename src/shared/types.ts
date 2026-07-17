@@ -179,16 +179,10 @@ export interface TrackedIssue {
   phase: IssuePhase
   repoPath?: string
   worktreePath?: string
-  /** Legacy: id of a Linear plan comment posted by an older app version. Plans are no longer posted. */
-  planCommentId?: string
   /** The plan text — a cached copy of the worktree plan file, which is the source of truth. */
   planBody?: string
   /** Blocking questions from the planning session — cached copy of the worktree questions file. */
   planQuestions?: PlanQuestion[]
-  /** Linear comment ids currently being handled by a plan_feedback or reprompt session */
-  feedbackCommentIds?: string[]
-  /** Only ticket comments after this instant count as reprompts (set on entering review) */
-  codeFeedbackCutoff?: string
   activeSessionId?: string
   prUrl?: string
   lastError?: string
@@ -422,6 +416,17 @@ export interface CreatedIssue {
   id: string
   identifier: string
   url: string
+}
+
+/** A Linear comment on a ticket — read-only, shown at the bottom of ticket details. */
+export interface IssueComment {
+  id: string
+  /** markdown, as authored in Linear */
+  body: string
+  createdAt: string
+  /** set when this comment is a threaded reply */
+  parentId?: string
+  authorName?: string
 }
 
 /**

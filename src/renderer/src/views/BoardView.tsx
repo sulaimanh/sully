@@ -1,4 +1,12 @@
-import { useEffect, useMemo, useRef, useState, type DragEvent, type ReactElement } from 'react'
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type DragEvent,
+  type ReactElement
+} from 'react'
 import ReactMarkdown from 'react-markdown'
 import {
   CircleHelp,
@@ -25,6 +33,7 @@ import type {
   BoardColumn,
   DeployBump,
   DevServer,
+  IssueComment,
   IssuePhase,
   Session,
   TrackedIssue
@@ -37,6 +46,8 @@ import DockablePanel, { DockControls } from '../components/DockablePanel'
 import AgentTerminal from '../components/AgentTerminal'
 import NewTicketDialog from '../components/NewTicketDialog'
 import PlanSelectionMenu, { type PlanSelectionAction } from '../components/PlanSelectionMenu'
+import TerminalDock from '../components/TerminalDock'
+import BrowserDock from '../components/BrowserDock'
 
 const COLUMNS: Array<{
   key: BoardColumn
@@ -318,6 +329,7 @@ function PlanDialog({
       modalClassName="h-[min(920px,90vh)] w-[min(1100px,92vw)] min-h-[420px] min-w-[520px]"
       minWidth={520}
       minHeight={420}
+      onClose={onClose}
     >
       <header className="hairline flex items-center justify-between border-b px-6 py-4">
         <div>
@@ -348,44 +360,41 @@ function PlanDialog({
           </button>
         </div>
       </header>
-      {draft !== null ? (
-        <textarea
-          value={draft}
-          onChange={(e) => setDraft(e.target.value)}
-          spellCheck={false}
-          autoFocus
-          className="hairline min-h-0 flex-1 resize-none bg-ink-950/40 px-6 py-4 font-mono text-[12px] leading-relaxed text-ink-100 outline-none"
-        />
-      ) : (
-        <div
-          ref={proseRef}
-          className="prose-plan selectable min-h-0 flex-1 overflow-y-auto px-6 py-4 text-[13px]"
-        >
-          {body ? (
-            <ReactMarkdown>{body}</ReactMarkdown>
-          ) : (
-            <p className="italic">No plan captured.</p>
-          )}
-        </div>
-      )}
-      <PlanSelectionMenu
-        containerRef={proseRef}
-        disabled={!selectable}
-        onAction={(a) => void actOnSelection(a)}
-      />
-      {/* the agent terminal lives under the plan; tickets with no repo mapped
+      {/* the agent terminal docks around the plan; tickets with no repo mapped
             can't spawn a worktree shell, so they keep the headless chat */}
-      {draft === null &&
-        issue.phase !== 'planning' &&
-        (issue.repoPath ? (
-          termOpen && (
-            <div className="hairline h-[38%] min-h-[200px] shrink-0 border-t">
-              <AgentTerminal issueId={issue.issueId} />
-            </div>
-          )
+      <TerminalDock
+        issueId={issue.issueId}
+        open={termOpen && draft === null && issue.phase !== 'planning' && Boolean(issue.repoPath)}
+      >
+        {draft !== null ? (
+          <textarea
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+            spellCheck={false}
+            autoFocus
+            className="hairline min-h-0 flex-1 resize-none bg-ink-950/40 px-6 py-4 font-mono text-[12px] leading-relaxed text-ink-100 outline-none"
+          />
         ) : (
-          <ChatPanel issue={issue} />
-        ))}
+          <div
+            ref={proseRef}
+            className="prose-plan selectable min-h-0 flex-1 overflow-y-auto px-6 py-4 text-[13px]"
+          >
+            {body ? (
+              <ReactMarkdown>{body}</ReactMarkdown>
+            ) : (
+              <p className="italic">No plan captured.</p>
+            )}
+          </div>
+        )}
+        <PlanSelectionMenu
+          containerRef={proseRef}
+          disabled={!selectable}
+          onAction={(a) => void actOnSelection(a)}
+        />
+      </TerminalDock>
+      {draft === null && issue.phase !== 'planning' && !issue.repoPath && (
+        <ChatPanel issue={issue} />
+      )}
       {issue.phase === 'plan_ready' && (
         <footer className="hairline flex justify-end gap-2 border-t px-6 py-3.5">
           {draft !== null ? (
@@ -459,6 +468,7 @@ function PlanQuestionsDialog({
       modalClassName="max-h-[88vh] w-[min(880px,90vw)] min-h-[380px] min-w-[480px]"
       minWidth={480}
       minHeight={380}
+      onClose={onClose}
     >
       <header className="hairline flex items-center justify-between border-b px-6 py-4">
         <div>
@@ -556,6 +566,7 @@ function RepromptDialog({
       modalClassName="h-[min(820px,88vh)] w-[min(920px,90vw)] min-h-[380px] min-w-[480px]"
       minWidth={480}
       minHeight={380}
+      onClose={onClose}
     >
       <header className="hairline flex items-center justify-between border-b px-6 py-4">
         <div>
@@ -628,6 +639,7 @@ function GhReviewDialog({
       modalClassName="h-[min(920px,90vh)] w-[min(1100px,92vw)] min-h-[420px] min-w-[520px]"
       minWidth={520}
       minHeight={420}
+      onClose={onClose}
     >
       <header className="hairline flex items-center justify-between border-b px-6 py-4">
         <div>
@@ -657,42 +669,44 @@ function GhReviewDialog({
         )}
       </div>
 
-      <div className="min-h-0 flex-1 overflow-y-auto px-6 py-4">
-        {items.length === 0 ? (
-          <p className="font-display text-[13px] text-ink-400">
-            No open review comments on the PR.
-          </p>
-        ) : (
-          <div className="flex flex-col gap-2.5">
-            {items.map((item) => (
-              <label
-                key={item.id}
-                className={cn(
-                  'hairline flex cursor-pointer gap-3 rounded-xl border bg-ink-850 p-3.5 transition-colors',
-                  selected.has(item.id) ? 'border-brass-500/40' : 'hover:border-ink-600'
-                )}
-              >
-                <input
-                  type="checkbox"
-                  className="mt-1 shrink-0"
-                  checked={selected.has(item.id)}
-                  onChange={() => toggle(item.id)}
-                />
-                <div className="min-w-0 flex-1">
-                  <p className="font-mono text-[10.5px] text-ink-400">
-                    {item.author && <span className="text-brass-300">{item.author}</span>}
-                    {item.author && item.file && ' — '}
-                    {item.file && `${item.file}${item.line ? `:${item.line}` : ''}`}
-                  </p>
-                  <div className="prose-plan mt-1 text-[12.5px]">
-                    <ReactMarkdown>{item.comment}</ReactMarkdown>
+      <TerminalDock issueId={issue.issueId} open={termOpen && Boolean(issue.repoPath)}>
+        <div className="min-h-0 flex-1 overflow-y-auto px-6 py-4">
+          {items.length === 0 ? (
+            <p className="font-display text-[13px] text-ink-400">
+              No open review comments on the PR.
+            </p>
+          ) : (
+            <div className="flex flex-col gap-2.5">
+              {items.map((item) => (
+                <label
+                  key={item.id}
+                  className={cn(
+                    'hairline flex cursor-pointer gap-3 rounded-xl border bg-ink-850 p-3.5 transition-colors',
+                    selected.has(item.id) ? 'border-brass-500/40' : 'hover:border-ink-600'
+                  )}
+                >
+                  <input
+                    type="checkbox"
+                    className="mt-1 shrink-0"
+                    checked={selected.has(item.id)}
+                    onChange={() => toggle(item.id)}
+                  />
+                  <div className="min-w-0 flex-1">
+                    <p className="font-mono text-[10.5px] text-ink-400">
+                      {item.author && <span className="text-brass-300">{item.author}</span>}
+                      {item.author && item.file && ' — '}
+                      {item.file && `${item.file}${item.line ? `:${item.line}` : ''}`}
+                    </p>
+                    <div className="prose-plan mt-1 text-[12.5px]">
+                      <ReactMarkdown>{item.comment}</ReactMarkdown>
+                    </div>
                   </div>
-                </div>
-              </label>
-            ))}
-          </div>
-        )}
-      </div>
+                </label>
+              ))}
+            </div>
+          )}
+        </div>
+      </TerminalDock>
 
       {items.length > 0 && (
         <footer className="hairline flex items-center justify-between border-t px-6 py-3">
@@ -712,18 +726,257 @@ function GhReviewDialog({
         </footer>
       )}
 
-      {/* same as PlanDialog: tickets with a repo get the live agent terminal
-            (toggled from the toolbar, hidden by default), repo-less tickets
-            keep the headless chat */}
-      {issue.repoPath ? (
-        termOpen && (
-          <div className="hairline h-[38%] min-h-[200px] shrink-0 border-t">
-            <AgentTerminal issueId={issue.issueId} />
-          </div>
-        )
+      {/* same as PlanDialog: tickets with a repo get the dockable agent
+            terminal (toggled from the toolbar, hidden by default), repo-less
+            tickets keep the headless chat */}
+      {!issue.repoPath && <ChatPanel issue={issue} />}
+    </DockablePanel>
+  )
+}
+
+function CommentBlock({ comment }: { comment: IssueComment }): ReactElement {
+  const name = comment.authorName ?? 'Unknown'
+  return (
+    <div>
+      <div className="flex items-center gap-2">
+        <span className="flex h-[18px] w-[18px] shrink-0 items-center justify-center rounded-full bg-ink-700 text-[9px] font-medium uppercase text-ink-200">
+          {name.slice(0, 1)}
+        </span>
+        <span className="text-[12.5px] font-medium text-ink-100">{name}</span>
+        <span className="text-[11px] text-ink-400">{timeAgo(comment.createdAt)}</span>
+      </div>
+      <div className="prose-plan mt-1.5 pl-[26px]">
+        <ReactMarkdown>{comment.body}</ReactMarkdown>
+      </div>
+    </div>
+  )
+}
+
+/** Linear comments at the bottom of ticket details, threaded the way Linear shows them. */
+function TicketComments({ issueId }: { issueId: string }): ReactElement {
+  const [comments, setComments] = useState<IssueComment[] | null>(null)
+  const [failed, setFailed] = useState(false)
+  /** thread root the composer replies under — null posts a top-level comment */
+  const [replyTo, setReplyTo] = useState<IssueComment | null>(null)
+  const [draft, setDraft] = useState('')
+  const [posting, setPosting] = useState(false)
+
+  const load = useCallback(
+    (): Promise<void> =>
+      window.sully
+        .linearIssueComments(issueId)
+        .then((list) => {
+          setComments(list)
+          setFailed(false)
+        })
+        .catch(() => {
+          // keep whatever is already on screen; only blank lists show the error
+          setComments((prev) => prev ?? [])
+          setFailed(true)
+        }),
+    [issueId]
+  )
+
+  useEffect(() => {
+    void load()
+  }, [load])
+
+  const send = async (): Promise<void> => {
+    const body = draft.trim()
+    if (!body || posting) return
+    setPosting(true)
+    try {
+      const ok = await call(window.sully.linearPostComment(issueId, body, replyTo?.id))
+      if (ok) {
+        setDraft('')
+        setReplyTo(null)
+        await load()
+      }
+    } finally {
+      setPosting(false)
+    }
+  }
+
+  const threads = useMemo(() => {
+    const sorted = [...(comments ?? [])].sort((a, b) => a.createdAt.localeCompare(b.createdAt))
+    // a reply whose parent didn't come back (pagination) degrades to top-level
+    const topLevel = sorted.filter((c) => !sorted.some((p) => p.id === c.parentId))
+    return topLevel.map((c) => ({
+      comment: c,
+      replies: sorted.filter((r) => r.parentId === c.id)
+    }))
+  }, [comments])
+
+  return (
+    <div className="hairline mt-6 border-t pt-4">
+      <p className="font-mono text-[11px] uppercase tracking-[0.18em] text-brass-400">comments</p>
+      {comments === null ? (
+        <p className="mt-3 text-[12.5px] italic text-ink-400">Loading comments…</p>
+      ) : failed ? (
+        <p className="mt-3 text-[12.5px] italic text-ink-400">Couldn&apos;t load comments.</p>
+      ) : threads.length === 0 ? (
+        <p className="mt-3 text-[12.5px] italic text-ink-400">No comments.</p>
       ) : (
-        <ChatPanel issue={issue} />
+        <div className="mt-4 flex flex-col gap-5">
+          {threads.map(({ comment, replies }) => (
+            <div key={comment.id}>
+              <CommentBlock comment={comment} />
+              {replies.length > 0 && (
+                <div className="hairline ml-2 mt-3 flex flex-col gap-4 border-l pl-4">
+                  {replies.map((r) => (
+                    <CommentBlock key={r.id} comment={r} />
+                  ))}
+                </div>
+              )}
+              <button
+                onClick={() => setReplyTo(comment)}
+                className="mt-1.5 pl-[26px] text-[11px] text-ink-400 hover:text-ink-100"
+              >
+                Reply
+              </button>
+            </div>
+          ))}
+        </div>
       )}
+
+      <div className="mt-4">
+        {replyTo && (
+          <div className="mb-1.5 flex items-center gap-1.5 text-[11px] text-ink-400">
+            Replying to {replyTo.authorName ?? 'Unknown'}
+            <button
+              onClick={() => setReplyTo(null)}
+              className="hover:text-ink-100"
+              title="Cancel reply"
+            >
+              <X size={11} />
+            </button>
+          </div>
+        )}
+        <div className="flex items-end gap-2">
+          <textarea
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault()
+                void send()
+              }
+            }}
+            placeholder={replyTo ? 'Write a reply…' : 'Leave a comment…'}
+            spellCheck={false}
+            rows={2}
+            disabled={posting}
+            className="hairline flex-1 resize-none rounded-lg border bg-ink-950/40 px-3 py-2 text-[12.5px] leading-relaxed text-ink-100 outline-none focus:border-brass-500/40 disabled:opacity-50"
+          />
+          <Button variant="primary" onClick={() => void send()} disabled={posting || !draft.trim()}>
+            <MessageSquarePlus size={12} /> {replyTo ? 'Reply' : 'Comment'}
+          </Button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+/**
+ * Read-only view of the ticket itself — description, state, repo, PR — opened
+ * by clicking anywhere on a board card. Actions stay in the card's "…" menu.
+ */
+function TicketDetailsDialog({
+  issue,
+  onClose
+}: {
+  issue: TrackedIssue
+  onClose: () => void
+}): ReactElement {
+  const repoName = issue.repoPath?.split('/').pop()
+  const description = (issue.description ?? '').trim()
+  // closing only hides the pane — the pty keeps running and reattaches with
+  // its scrollback when reopened (same as PlanDialog / GhReviewDialog)
+  const [termOpen, setTermOpen] = useState(false)
+  /** PR or Linear page shown in the in-dialog browser pane */
+  const [browserUrl, setBrowserUrl] = useState<string | null>(null)
+
+  return (
+    <DockablePanel
+      id="ticket-details"
+      modalClassName="h-[min(820px,88vh)] w-[min(920px,90vw)] min-h-[380px] min-w-[480px]"
+      minWidth={480}
+      minHeight={380}
+      onClose={onClose}
+    >
+      <header className="hairline flex items-center justify-between border-b px-6 py-4">
+        <div>
+          <p className="font-mono text-[11px] uppercase tracking-[0.18em] text-brass-400">
+            ticket details
+          </p>
+          <h3 className="mt-0.5 font-display text-[19px] text-ink-50">
+            {issue.identifier} — {issue.title}
+          </h3>
+        </div>
+        <div className="flex items-center gap-3">
+          <DockControls />
+          <button onClick={onClose} className="text-ink-300 hover:text-ink-50">
+            <X size={17} />
+          </button>
+        </div>
+      </header>
+
+      {/* one row: ticket metadata left, spend/recency + terminal toggle right */}
+      <div className="hairline flex flex-wrap items-center gap-2 border-b px-6 py-2.5">
+        <span className="rounded bg-ink-700 px-1.5 py-px font-mono text-[10.5px] text-ink-200">
+          {issue.stateName}
+        </span>
+        {repoName && (
+          <span className="rounded bg-ink-700 px-1.5 py-px font-mono text-[10.5px] text-ink-200">
+            {repoName}
+          </span>
+        )}
+        <span className="font-mono text-[10.5px] text-ink-400">{issue.branchName}</span>
+        <span className="ml-auto flex items-center gap-2 font-mono text-[10.5px] text-ink-400">
+          {typeof issue.costUsd === 'number' && issue.costUsd >= 0.01 && (
+            <span title="Total AI spend across this ticket's sessions">
+              ${issue.costUsd.toFixed(2)}
+            </span>
+          )}
+          {timeAgo(issue.updatedAt)}
+        </span>
+        {issue.repoPath && (
+          <Button
+            onClick={() => setTermOpen(!termOpen)}
+            title={termOpen ? 'Hide the agent terminal' : 'Show the agent terminal'}
+          >
+            <SquareTerminal size={12} /> {termOpen ? 'Hide terminal' : 'Terminal'}
+          </Button>
+        )}
+      </div>
+
+      <BrowserDock url={browserUrl} onClose={() => setBrowserUrl(null)}>
+        <TerminalDock issueId={issue.issueId} open={termOpen && Boolean(issue.repoPath)}>
+          <div className="selectable min-h-0 flex-1 overflow-y-auto px-6 py-4 text-[13px]">
+            <div className="prose-plan">
+              {description ? (
+                <ReactMarkdown>{description}</ReactMarkdown>
+              ) : (
+                <p className="italic">No description.</p>
+              )}
+            </div>
+            {/* keyed so switching tickets in a docked panel resets the list and composer */}
+            <TicketComments key={issue.issueId} issueId={issue.issueId} />
+          </div>
+        </TerminalDock>
+      </BrowserDock>
+
+      <footer className="hairline flex items-center justify-end gap-2 border-t px-6 py-3.5">
+        <Button onClick={onClose}>Close</Button>
+        {issue.prUrl && (
+          <Button onClick={() => setBrowserUrl(issue.prUrl!)}>
+            <GitPullRequest size={12} /> Open pull request
+          </Button>
+        )}
+        <Button variant="primary" onClick={() => setBrowserUrl(issue.url)}>
+          <ExternalLink size={12} /> Open in Linear
+        </Button>
+      </footer>
     </DockablePanel>
   )
 }
@@ -750,7 +1003,15 @@ function CardMenu({
       </Button>
       {open && (
         <>
-          <div className="fixed inset-0 z-[70]" onClick={() => setOpen(false)} />
+          <div
+            className="fixed inset-0 z-[70]"
+            onClick={(e) => {
+              // don't let the click-away bubble to the card, which would open
+              // the ticket details right after closing the menu
+              e.stopPropagation()
+              setOpen(false)
+            }}
+          />
           <div className="hairline-strong absolute right-0 top-full z-[71] mt-1 w-[220px] rounded-lg border bg-ink-900 py-1 shadow-2xl">
             {actions.map((a) => (
               <button
@@ -777,6 +1038,7 @@ function IssueCard({
   session,
   devServer,
   devCommand,
+  onViewDetails,
   onViewPlan,
   onViewLog,
   onReprompt,
@@ -787,6 +1049,7 @@ function IssueCard({
   session?: Session
   devServer?: DevServer
   devCommand?: string
+  onViewDetails: () => void
   onViewPlan: () => void
   onViewLog: () => void
   onReprompt: () => void
@@ -849,10 +1112,10 @@ function IssueCard({
   return (
     <div
       onClick={(e) => {
-        // whole-card click opens the actions menu; the card's own controls
+        // whole-card click opens the ticket details; the card's own controls
         // (buttons, links, selectable error text) keep their behavior
         if ((e.target as HTMLElement).closest('button, a, .selectable')) return
-        if (actions.length > 0) setMenuOpen(!menuOpen)
+        onViewDetails()
       }}
       className={cn(
         'hairline group rounded-xl border bg-ink-850 p-3.5 transition-all duration-200 hover:border-ink-600',
@@ -1117,6 +1380,7 @@ function DeployDialog({ onClose }: { onClose: () => void }): ReactElement {
       modalClassName="max-h-[82vh] w-[min(720px,90vw)]"
       minWidth={420}
       minHeight={280}
+      onClose={onClose}
     >
       <header className="hairline flex items-center justify-between border-b px-6 py-4">
         <div>
@@ -1227,6 +1491,7 @@ function DeployDialog({ onClose }: { onClose: () => void }): ReactElement {
 
 export default function BoardView(): ReactElement {
   const { issues, sessions, settings, devServers, deploys } = useApp()
+  const [detailsFor, setDetailsFor] = useState<TrackedIssue | null>(null)
   const [planFor, setPlanFor] = useState<TrackedIssue | null>(null)
   const [questionsFor, setQuestionsFor] = useState<TrackedIssue | null>(null)
   const [logFor, setLogFor] = useState<Session | null>(null)
@@ -1354,6 +1619,7 @@ export default function BoardView(): ReactElement {
                   session={sessionFor(issue)}
                   devServer={devServers[issue.issueId]}
                   devCommand={devCommandFor(issue)}
+                  onViewDetails={() => setDetailsFor(issue)}
                   onViewPlan={() => setPlanFor(issue)}
                   onViewLog={() => {
                     const s = sessionFor(issue)
@@ -1418,6 +1684,7 @@ export default function BoardView(): ReactElement {
                         session={sessionFor(issue)}
                         devServer={devServers[issue.issueId]}
                         devCommand={devCommandFor(issue)}
+                        onViewDetails={() => setDetailsFor(issue)}
                         onViewPlan={() => setPlanFor(issue)}
                         onViewLog={() => {
                           const s = sessionFor(issue)
@@ -1441,6 +1708,14 @@ export default function BoardView(): ReactElement {
         Tickets enter the board when they land in a mapped Linear column and are assigned to you.
       </p>
 
+      {detailsFor && (
+        <TicketDetailsDialog
+          // keyed so opening a different ticket resets the browser/terminal panes
+          key={detailsFor.issueId}
+          issue={issues[detailsFor.issueId] ?? detailsFor}
+          onClose={() => setDetailsFor(null)}
+        />
+      )}
       {planFor && (
         <PlanDialog issue={issues[planFor.issueId] ?? planFor} onClose={() => setPlanFor(null)} />
       )}

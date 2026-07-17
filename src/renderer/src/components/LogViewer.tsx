@@ -27,12 +27,28 @@ export default function LogViewer({
   session: Session
   onClose: () => void
 }): ReactElement {
-  const events = useApp((s) => s.sessionEvents[session.id] ?? EMPTY_EVENTS)
+  const liveEvents = useApp((s) => s.sessionEvents[session.id] ?? EMPTY_EVENTS)
   const live = useApp((s) => s.sessions[session.id] ?? session)
   const [raw, setRaw] = useState(false)
   const [rawContent, setRawContent] = useState('')
+  const [backfill, setBackfill] = useState<StreamEvent[] | null>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
   const stick = useRef(true)
+
+  // sessions that streamed in a previous app run have no live events in the
+  // store — rebuild the pretty view once from the on-disk log
+  useEffect(() => {
+    if (liveEvents.length > 0 || live.status === 'running') return
+    let cancelled = false
+    void window.sully.readSessionEvents(session.id).then((evs) => {
+      if (!cancelled) setBackfill(evs)
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [liveEvents.length, live.status, session.id])
+
+  const events = liveEvents.length > 0 ? liveEvents : (backfill ?? EMPTY_EVENTS)
 
   // raw mode: poll the log file (also covers orphaned sessions with no live events)
   useEffect(() => {
@@ -68,6 +84,7 @@ export default function LogViewer({
       modalClassName="h-[min(920px,90vh)] w-[min(1200px,92vw)] min-h-[420px] min-w-[560px]"
       minWidth={560}
       minHeight={420}
+      onClose={onClose}
     >
       <header className="hairline flex items-center gap-3 border-b px-5 py-3.5">
         {running ? <Vu /> : null}
@@ -119,7 +136,9 @@ export default function LogViewer({
           <p className="italic text-ink-400">
             {running
               ? 'waiting for output…'
-              : 'No live output captured in this app run. Switch to Raw to read the log file.'}
+              : backfill === null
+                ? 'reading log…'
+                : 'No output in the log file for this session.'}
           </p>
         ) : (
           events.map((ev, i) => (

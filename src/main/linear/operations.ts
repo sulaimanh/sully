@@ -160,7 +160,7 @@ export interface LinearComment {
   body: string
   createdAt: string
   parent?: { id: string } | null
-  user?: { id: string } | null
+  user?: { id: string; name?: string; displayName?: string } | null
 }
 
 export async function fetchIssueComments(issueId: string): Promise<LinearComment[]> {
@@ -168,11 +168,25 @@ export async function fetchIssueComments(issueId: string): Promise<LinearComment
     issue: { comments: { nodes: LinearComment[] } }
   }>(
     `query IssueComments($issueId: String!) {
-      issue(id: $issueId) { comments(first: 50) { nodes { id body createdAt parent { id } user { id } } } }
+      issue(id: $issueId) {
+        comments(first: 50) {
+          nodes { id body createdAt parent { id } user { id name displayName } }
+        }
+      }
     }`,
     { issueId }
   )
   return data.issue.comments.nodes
+}
+
+/** Post a comment as the API key's user; parentId threads it under a top-level comment. */
+export async function postComment(issueId: string, body: string, parentId?: string): Promise<void> {
+  await linearRequest(
+    `mutation PostComment($issueId: String!, $body: String!${parentId ? ', $parentId: String!' : ''}) {
+      commentCreate(input: { issueId: $issueId, body: $body${parentId ? ', parentId: $parentId' : ''} }) { success }
+    }`,
+    parentId ? { issueId, body, parentId } : { issueId, body }
+  )
 }
 
 export async function fetchIssueState(issueId: string): Promise<{ id: string; name: string }> {
@@ -189,28 +203,5 @@ export async function moveIssue(issueId: string, stateId: string): Promise<void>
       issueUpdate(id: $issueId, input: { stateId: $stateId }) { success }
     }`,
     { issueId, stateId }
-  )
-}
-
-export async function postComment(
-  issueId: string,
-  body: string,
-  parentId?: string
-): Promise<string> {
-  const data = await linearRequest<{ commentCreate: { comment: { id: string } } }>(
-    `mutation PostComment($issueId: String!, $body: String!${parentId ? ', $parentId: String!' : ''}) {
-      commentCreate(input: { issueId: $issueId, body: $body${parentId ? ', parentId: $parentId' : ''} }) { comment { id } }
-    }`,
-    parentId ? { issueId, body, parentId } : { issueId, body }
-  )
-  return data.commentCreate.comment.id
-}
-
-export async function updateComment(commentId: string, body: string): Promise<void> {
-  await linearRequest(
-    `mutation UpdateComment($commentId: String!, $body: String!) {
-      commentUpdate(id: $commentId, input: { body: $body }) { success }
-    }`,
-    { commentId, body }
   )
 }
