@@ -30,6 +30,17 @@ import BrowserPanel from './components/BrowserPanel'
 import QuitConfirm from './components/QuitConfirm'
 import ShortcutsModal from './components/ShortcutsModal'
 
+/* the bar mark from resources/icon.svg, transparent and theme-aware */
+function SullyMark({ className }: { className?: string }): ReactElement {
+  return (
+    <svg viewBox="0 0 364 424" fill="currentColor" className={className} aria-label="Sully">
+      <rect x="0" y="122" width="104" height="284" rx="52" />
+      <rect x="130" y="0" width="104" height="424" rx="52" />
+      <rect x="260" y="170" width="104" height="140" rx="52" />
+    </svg>
+  )
+}
+
 const NAV: Array<{ id: View; label: string; icon: typeof Columns3 }> = [
   { id: 'board', label: 'Board', icon: Columns3 },
   { id: 'sessions', label: 'Sessions', icon: ListVideo },
@@ -132,30 +143,27 @@ export default function App(): ReactElement {
             sidebarExpanded ? 'w-[200px]' : 'w-[72px]'
           )}
         >
-          {/* wordmark row. While collapsed, drop the drag region: dragging
-            swallows the hover events the hover-expand behavior depends on */}
-          <div
+          {/* logo row: the whole strip toggles the sidebar, revealing the
+            collapse icon on hover */}
+          <button
+            onClick={toggleSidebar}
+            title={sidebarCollapsed ? 'Pin sidebar open (⌘B)' : 'Collapse sidebar (⌘B)'}
             className={cn(
-              'flex items-center pb-1 pt-3',
-              !sidebarCollapsed && 'titlebar-drag',
-              sidebarExpanded ? 'justify-between px-4' : 'justify-center'
+              'group mx-2 mt-3 flex cursor-pointer items-center rounded-lg py-1.5 transition-colors duration-150 hover:bg-ink-800',
+              sidebarExpanded ? 'justify-between px-3' : 'justify-center'
             )}
           >
+            <SullyMark className="h-[20px] w-auto shrink-0 text-ink-50" />
             {sidebarExpanded && (
-              <span className="font-display text-[19px] tracking-tight text-ink-50">Sully</span>
+              <span className="text-ink-400 opacity-0 transition-[opacity,color] duration-150 group-hover:opacity-100 group-hover:text-ink-100 group-focus-visible:opacity-100">
+                {sidebarCollapsed ? (
+                  <PanelLeftOpen size={15} strokeWidth={1.8} />
+                ) : (
+                  <PanelLeftClose size={15} strokeWidth={1.8} />
+                )}
+              </span>
             )}
-            <button
-              onClick={toggleSidebar}
-              title={sidebarCollapsed ? 'Pin sidebar open (⌘B)' : 'Collapse sidebar (⌘B)'}
-              className="rounded-lg p-1.5 text-ink-400 transition-colors duration-150 hover:bg-ink-800 hover:text-ink-100"
-            >
-              {sidebarCollapsed ? (
-                <PanelLeftOpen size={15} strokeWidth={1.8} />
-              ) : (
-                <PanelLeftClose size={15} strokeWidth={1.8} />
-              )}
-            </button>
-          </div>
+          </button>
 
           <nav className="mt-3 flex flex-col gap-0.5 px-2">
             {NAV.map(({ id, label, icon: Icon }) => (
