@@ -10,17 +10,12 @@ import { subsetMcpConfigFile } from '../mcp'
 
 export const PLAN_FILE_REL = '.sully/plan.md'
 export const FEEDBACK_REPLY_FILE_REL = '.sully/feedback-reply.md'
-export const GH_REVIEW_FILE_REL = '.sully/github-review.json'
 export const PLAN_QUESTIONS_FILE_REL = '.sully/questions.json'
 
 // Planning sessions run headless, so the agent can't ask interactively. This
 // contract gives it an escape hatch: stop and write questions instead of
 // guessing — a wrong assumption here produces a confidently wrong plan.
 const PLAN_QUESTIONS_CONTRACT = `If the ticket is ambiguous in a way that would materially change the plan (unclear requirements, several plausible approaches, missing context you cannot resolve from the codebase or the ticket), do NOT guess and do NOT write ${PLAN_FILE_REL}. Instead write your blocking questions as JSON to ${PLAN_QUESTIONS_FILE_REL} (create directories as needed) and stop: an array where each element has "question" (one specific question), "context" (brief — what you found and why the answer changes the plan), and optionally "options" (2-4 plausible answers). The file must contain only valid JSON — no code fences or surrounding prose. The user's answers arrive in a follow-up turn. Only ask questions whose answers change the plan; resolve everything else from the codebase yourself.`
-
-// The fetch session writes review comments in this shape so the modal can
-// offer them as individually addressable items (ids are assigned on parse).
-const GH_REVIEW_JSON_CONTRACT = `Write the result as JSON to ${GH_REVIEW_FILE_REL} (create directories as needed): an array where each element has "author" (the commenter's login), "file" and "line" (the target of an inline comment — omit both for top-level comments; "line" is a number), "comment" (the comment text, markdown), and "suggestion" (your suggested response or proposed fix, markdown). Write [] if there are no comments to report. The file must contain only valid JSON — no code fences or surrounding prose.`
 
 // Replies land as Linear comments read by non-engineers reviewing the ticket,
 // so they must read like a teammate's quick update, not an engineering report.
@@ -282,44 +277,6 @@ export function buildRepromptCommand(
   return claudeArgs(config, task)
 }
 
-/**
- * User-triggered "Fetch GitHub comments" on an in-review ticket: pull the human
- * review comments off the PR into JSON at GH_REVIEW_FILE_REL — fetch only,
- * never a code change. The app stores the parsed items on the ticket; the
- * "View GitHub review" modal renders them as individually addressable cards.
- */
-export function buildFetchCommentsCommand(
-  config: PhaseConfig,
-  issue: TrackedIssue,
-  worktreePath: string
-): string[] {
-  const task = [
-    `The implementation for the ticket below is complete and under review${issue.prUrl ? ` (PR: ${issue.prUrl})` : ''}. Fetch the human review comments on that pull request with the gh CLI (gh pr view --comments, plus gh api for inline review-thread comments). Ignore comments left by bots and comments already resolved.`,
-    'This is a fetch only — do NOT change any code, commit, or push.',
-    GH_REVIEW_JSON_CONTRACT,
-    '',
-    ticketContext(issue, issue.description),
-    '',
-    'Run fully non-interactively: never ask questions or wait for confirmation.'
-  ].join('\n')
-
-  if (config.agent === 'codex') return codexArgs(config, task, worktreePath)
-  // a configured skill owns the fetch flow; keep the JSON contract so the
-  // result still reaches the modal
-  const prompt = config.skill
-    ? [
-        config.skill,
-        ticketContext(issue, issue.description),
-        issue.prUrl ? `PR: ${issue.prUrl}` : '',
-        `Whatever the skill produces, also express the fetched comments this way: ${GH_REVIEW_JSON_CONTRACT} Do NOT change any code, commit, or push.`,
-        'Run fully non-interactively: never ask questions or wait for confirmation.'
-      ]
-        .filter(Boolean)
-        .join('\n\n')
-    : task
-  return claudeArgs(config, prompt)
-}
-
 export function buildCodingCommand(
   config: PhaseConfig,
   issue: TrackedIssue,
@@ -427,11 +384,10 @@ export const SKILL_REVIEW_MIN_CHANGED_LINES = 300
 export function buildReviewCommand(
   config: PhaseConfig,
   prUrl: string,
-  reviewPrompt: string,
   changedLines?: number
 ): string[] {
   if (config.agent === 'codex') {
-    const prompt = `Review the GitHub pull request ${prUrl}. Check out the PR locally (gh pr checkout), read the diff carefully, and look for real bugs, security issues, and correctness problems. Then post your review on GitHub via the gh CLI. ${reviewPrompt}`
+    const prompt = `Review the GitHub pull request ${prUrl}. Check out the PR locally (gh pr checkout), read the diff carefully, and look for real bugs, security issues, and correctness problems. Then post your review on GitHub via the gh CLI.`
     return codexArgs(config, prompt, process.cwd())
   }
   // Unknown diff size (API hiccup) keeps the configured skill: degrading
@@ -439,8 +395,8 @@ export function buildReviewCommand(
   const useSkill =
     Boolean(config.skill) &&
     !(changedLines !== undefined && changedLines < SKILL_REVIEW_MIN_CHANGED_LINES)
-  const lead = useSkill
-    ? `${config.skill} ${prUrl}\n\n`
-    : `Review the GitHub pull request ${prUrl}. Read the full diff (gh pr diff) and the changed files for context. Look for real bugs, security issues, and correctness problems — not style nits. Then post your review on GitHub via the gh CLI (gh pr review).\n\n`
-  return claudeArgs(config, `${lead}${reviewPrompt}`)
+  const prompt = useSkill
+    ? `${config.skill} ${prUrl}`
+    : `Review the GitHub pull request ${prUrl}. Read the full diff (gh pr diff) and the changed files for context. Look for real bugs, security issues, and correctness problems — not style nits. Then post your review on GitHub via the gh CLI (gh pr review).`
+  return claudeArgs(config, prompt)
 }

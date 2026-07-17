@@ -50,12 +50,7 @@ export class PRReviewWatcher extends EventEmitter {
     this.recordAttempt(row.url, status.headRefOid)
 
     const settings = settingsStore.get()
-    const command = buildReviewCommand(
-      settings.phases.prReview,
-      row.url,
-      settings.prWatcher.reviewPrompt,
-      status.changedLines
-    )
+    const command = buildReviewCommand(settings.phases.prReview, row.url, status.changedLines)
     const session = processManager.start({
       kind: 'pr_review',
       agent: settings.phases.prReview.agent,
@@ -199,12 +194,7 @@ export class PRReviewWatcher extends EventEmitter {
       if (status.headRefOid && this.attempts[pr.url] === status.headRefOid) continue
       this.recordAttempt(pr.url, status.headRefOid)
 
-      const command = buildReviewCommand(
-        settings.phases.prReview,
-        pr.url,
-        settings.prWatcher.reviewPrompt,
-        status.changedLines
-      )
+      const command = buildReviewCommand(settings.phases.prReview, pr.url, status.changedLines)
       const session = processManager.start({
         kind: 'pr_review',
         agent: settings.phases.prReview.agent,

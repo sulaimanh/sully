@@ -1,7 +1,6 @@
 // Shared contracts between main, preload, and renderer.
 
-export type PhaseKey =
-  'planning' | 'coding' | 'createPr' | 'prReview' | 'fetchComments' | 'errorInvestigation'
+export type PhaseKey = 'planning' | 'coding' | 'createPr' | 'prReview' | 'errorInvestigation'
 
 export type AgentKind = 'claude' | 'codex'
 
@@ -107,7 +106,7 @@ export interface Session {
     | 'create_pr'
     | 'reprompt'
     | 'pr_review'
-    | 'fetch_comments'
+    | 'fetch_comments' // legacy — kept so old persisted session records still render
     | 'error_investigation'
     | 'probe'
   issueId?: string
@@ -137,9 +136,9 @@ export interface Session {
   numTurns?: number
 }
 
-/** One review comment fetched off a ticket's PR, individually addressable from the modal. */
+/** One open review comment on a ticket's PR, individually addressable from the modal. */
 export interface GhReviewItem {
-  /** index-based, assigned on parse — only meaningful within the stored array */
+  /** GraphQL node id — stable across the poll's refetches */
   id: string
   author?: string
   /** file path + line the comment targets (inline comments only) */
@@ -147,8 +146,6 @@ export interface GhReviewItem {
   line?: number
   /** the reviewer's comment (markdown) */
   comment: string
-  /** the agent's suggested response or proposed fix (markdown) */
-  suggestion?: string
 }
 
 export interface ChatMessage {
@@ -207,6 +204,18 @@ export interface TrackedIssue {
   chat?: ChatMessage[]
   /** claude conversation to --resume for chat follow-ups, so context isn't re-explored each turn */
   chatSessionId?: string
+  /** CI state of the PR head, refreshed while the ticket is in review */
+  ciStatus?: {
+    state: 'pass' | 'fail' | 'pending' | 'none'
+    headSha: string
+    /** names of failing checks (fail state only) */
+    failed: string[]
+    checkedAt: string
+  }
+  /** head SHAs an auto-fix was already launched for — never re-attempt one (capped, newest last) */
+  ciFixAttemptShas?: string[]
+  /** PR review decision, refreshed alongside ciStatus. 'none' = repo requires no reviews */
+  prReview?: 'approved' | 'changes_requested' | 'review_required' | 'none'
   updatedAt: string
 }
 
@@ -294,7 +303,6 @@ export interface PhaseSettings {
   coding: PhaseConfig
   createPr: PhaseConfig
   prReview: PhaseConfig
-  fetchComments: PhaseConfig
   errorInvestigation: PhaseConfig
 }
 
@@ -312,6 +320,10 @@ export interface AppSettings {
     requiredLabel: string
     /** Notify once when a ticket's cumulative session cost crosses this (USD). 0 = off. */
     ticketBudgetUsd: number
+    /** Watch PR checks on in-review tickets and auto-spawn a fix session when CI fails */
+    ciAutoFix: boolean
+    /** Give up after this many auto-fix attempts per red streak */
+    ciMaxFixAttempts: number
   }
   prWatcher: {
     enabled: boolean
@@ -319,7 +331,6 @@ export interface AppSettings {
     maxConcurrent: number
     timeoutMs: number
     retentionMs: number
-    reviewPrompt: string
   }
   toolHealth: {
     /** MCP server names (from `claude mcp list`) sessions depend on — checked by the health banner */
@@ -475,9 +486,6 @@ export interface CredentialStatus {
   posthogKeySet: boolean
 }
 
-export const DEFAULT_REVIEW_PROMPT =
-  'Post review and accept PR if verdict is accept. Run non-interactively: do not ask for confirmation, post the review directly via the GitHub API.'
-
 // Models are tiered by phase difficulty: Opus where quality pays for itself
 // (planning, coding), Haiku for the mechanical create-pr phase, Sonnet for
 // read-and-report work. Effort is left at the CLI default on purpose.
@@ -514,15 +522,6 @@ export function defaultPhaseSettings(): PhaseSettings {
       maxBudgetUsd: 5,
       mcp: false
     },
-    // read-and-report: fetches PR comments into a document, never changes code;
-    // gh CLI only, no MCP
-    fetchComments: {
-      agent: 'claude',
-      model: 'sonnet',
-      permissionMode: 'bypass',
-      timeoutMs: 15 * 60_000,
-      mcp: false
-    },
     errorInvestigation: {
       agent: 'claude',
       model: 'sonnet',
@@ -544,15 +543,16 @@ export function defaultSettings(): AppSettings {
       maxConcurrentPlanning: 2,
       maxConcurrentCoding: 2,
       requiredLabel: 'sully',
-      ticketBudgetUsd: 25
+      ticketBudgetUsd: 25,
+      ciAutoFix: true,
+      ciMaxFixAttempts: 3
     },
     prWatcher: {
       enabled: false,
       intervalMs: 60_000,
       maxConcurrent: 3,
       timeoutMs: 40 * 60_000,
-      retentionMs: 60 * 60_000,
-      reviewPrompt: DEFAULT_REVIEW_PROMPT
+      retentionMs: 60 * 60_000
     },
     toolHealth: {
       mcpServers: ['linear-runwise', 'claude.ai Figma']

@@ -61,6 +61,7 @@ function CredentialsSection(): ReactElement {
   const [posthogKey, setPosthogKey] = useState('')
   const [doctor, setDoctor] = useState<DoctorReport | null>(null)
   const [checking, setChecking] = useState(false)
+  const [reconnecting, setReconnecting] = useState<string | null>(null)
 
   async function save(): Promise<void> {
     const ok = await call(
@@ -86,6 +87,23 @@ function CredentialsSection(): ReactElement {
       setDoctor(await window.sully.runDoctor())
     } finally {
       setChecking(false)
+    }
+  }
+
+  // `claude mcp login` opens the browser OAuth flow; the returned check
+  // replaces just that server's row
+  async function reconnectMcp(name: string): Promise<void> {
+    setReconnecting(name)
+    try {
+      const check = await window.sully.mcpLogin(name)
+      setDoctor((d) => d && { ...d, checks: d.checks.map((c) => (c.id === check.id ? check : c)) })
+      useApp
+        .getState()
+        .pushToast(check.ok ? 'success' : 'error', `MCP ${name}: ${check.detail.slice(0, 120)}`)
+    } catch (err) {
+      useApp.getState().pushToast('error', `MCP ${name}: ${(err as Error).message}`)
+    } finally {
+      setReconnecting(null)
     }
   }
 
@@ -174,6 +192,22 @@ function CredentialsSection(): ReactElement {
                   <p className="selectable break-words font-mono text-[10.5px] text-ink-400">
                     {c.detail}
                   </p>
+                  {!c.ok && c.id.startsWith('mcp-') && (
+                    <Button
+                      className="mt-1"
+                      onClick={() => void reconnectMcp(c.id.slice('mcp-'.length))}
+                      disabled={reconnecting !== null}
+                    >
+                      {reconnecting === c.id.slice('mcp-'.length) ? (
+                        <>
+                          <RefreshCw size={12} className="animate-spin" />
+                          Waiting for browser…
+                        </>
+                      ) : (
+                        'Reconnect'
+                      )}
+                    </Button>
+                  )}
                 </div>
               </div>
             ))}
@@ -546,11 +580,6 @@ const PHASES: Array<{ key: PhaseKey; title: string; blurb: string }> = [
   { key: 'coding', title: 'Coding', blurb: 'implements the approved plan' },
   { key: 'createPr', title: 'Create PR', blurb: 'commits, pushes, and opens the PR' },
   { key: 'prReview', title: 'PR Review', blurb: 'reviews teammates’ PRs' },
-  {
-    key: 'fetchComments',
-    title: 'Fetch GitHub Comments',
-    blurb: 'pulls a ticket’s PR review comments into a document'
-  },
   {
     key: 'errorInvestigation',
     title: 'Error Investigation',
@@ -948,20 +977,39 @@ function TunablesSection(): ReactElement {
             />
           </div>
         </div>
-        <div className="col-span-4">
-          <Field label="Review prompt (appended to every PR review session)">
-            <textarea
-              className={cn(inputCls, 'min-h-[54px] resize-y')}
-              value={settings.prWatcher.reviewPrompt}
-              onChange={(e) =>
-                save({
-                  ...settings,
-                  prWatcher: { ...settings.prWatcher, reviewPrompt: e.target.value }
-                })
+        <div
+          className="flex flex-col gap-1"
+          title="When a ticket's PR checks fail, resume the coding session with the failure logs, push a fix, and re-check — up to the attempt cap"
+        >
+          <span className="text-[11px] font-bold text-ink-300">Auto-fix failing CI</span>
+          <div className="flex h-[30px] items-center">
+            <Toggle
+              checked={settings.orchestrator.ciAutoFix}
+              onChange={(v) =>
+                save({ ...settings, orchestrator: { ...settings.orchestrator, ciAutoFix: v } })
               }
+              label="Auto-fix failing CI"
             />
-          </Field>
+          </div>
         </div>
+        <Field label="Max CI fix attempts">
+          <input
+            type="number"
+            className={inputCls}
+            min={1}
+            value={settings.orchestrator.ciMaxFixAttempts}
+            title="Give up (with a notification) after this many auto-fix attempts on one red streak"
+            onChange={(e) =>
+              save({
+                ...settings,
+                orchestrator: {
+                  ...settings.orchestrator,
+                  ciMaxFixAttempts: Math.max(1, Number(e.target.value))
+                }
+              })
+            }
+          />
+        </Field>
       </div>
     </section>
   )

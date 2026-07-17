@@ -121,6 +121,47 @@ export async function checkMcpServers(watch: string[]): Promise<DoctorCheck[]> {
 }
 
 /**
+ * Re-authenticate one MCP server via `claude mcp login <name>` (opens the
+ * browser OAuth flow) and return its fresh check. Never rejects — failures
+ * come back as a failing check so the settings UI shows them inline. The CLI
+ * exits 0 even when login fails, so the post-login `claude mcp list` probe is
+ * the source of truth and the login output only supplies the error detail.
+ */
+export async function loginMcpServer(name: string): Promise<DoctorCheck> {
+  const mk = (ok: boolean, detail: string): DoctorCheck => ({
+    id: `mcp-${name}`,
+    label: `MCP: ${name}`,
+    ok,
+    detail
+  })
+  const claudeBin = binaryPath('claude')
+  if (!claudeBin) return mk(false, 'claude CLI not found')
+
+  let loginOutput = ''
+  try {
+    const { stdout, stderr } = await pexecFile(claudeBin, ['mcp', 'login', name], {
+      env: spawnEnv(),
+      timeout: 180_000,
+      maxBuffer: 4 * 1024 * 1024
+    })
+    loginOutput = `${stdout}\n${stderr}`.trim()
+  } catch (err) {
+    return mk(
+      false,
+      (err as { killed?: boolean }).killed
+        ? 'login timed out — browser authorization was not completed'
+        : `login failed — ${(err as Error).message.slice(0, 120)}`
+    )
+  }
+
+  const [check] = await checkMcpServers([name])
+  if (!check) return mk(false, 'login ran but status is unknown — check `claude mcp list`')
+  // a failed login leaves the old status; the CLI's own message says why
+  if (!check.ok && loginOutput) return mk(false, loginOutput.split('\n')[0].slice(0, 160))
+  return check
+}
+
+/**
  * Everything except the headless claude probe — cheap enough for the
  * background tool-health monitor to run periodically.
  */

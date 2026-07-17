@@ -20,7 +20,6 @@ class SettingsStore extends EventEmitter {
         coding: { ...base.phases.coding, ...stored.phases?.coding },
         createPr: { ...base.phases.createPr, ...stored.phases?.createPr },
         prReview: { ...base.phases.prReview, ...stored.phases?.prReview },
-        fetchComments: { ...base.phases.fetchComments, ...stored.phases?.fetchComments },
         errorInvestigation: {
           ...base.phases.errorInvestigation,
           ...stored.phases?.errorInvestigation

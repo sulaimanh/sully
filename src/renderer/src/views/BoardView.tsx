@@ -581,10 +581,10 @@ function RepromptDialog({
 }
 
 /**
- * Fetched GitHub PR review comments as individually addressable items. Pick a
- * subset and "Address selected" dispatches an in-app reprompt for just those;
- * re-run refreshes the list in place. The chat below routes to the reprompt
- * flow too, so freeform follow-ups work from here.
+ * Open GitHub PR review comments (auto-refreshed by the orchestrator poll) as
+ * individually addressable items. Pick a subset and "Address selected"
+ * dispatches an in-app reprompt for just those. The chat below routes to the
+ * reprompt flow too, so freeform follow-ups work from here.
  */
 function GhReviewDialog({
   issue,
@@ -598,11 +598,12 @@ function GhReviewDialog({
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const [termOpen, setTermOpen] = useState(false)
 
-  // a re-run replaces the items (and their index-based ids) — stale picks must not carry over
+  // the poll refreshes items in place (ids are stable) — drop picks whose
+  // comment disappeared (resolved/deleted), keep the rest
   const [seenItems, setSeenItems] = useState(issue.ghReviewItems)
   if (seenItems !== issue.ghReviewItems) {
     setSeenItems(issue.ghReviewItems)
-    setSelected(new Set())
+    setSelected(new Set([...selected].filter((id) => items.some((i) => i.id === id))))
   }
 
   const toggle = (id: string): void => {
@@ -646,19 +647,6 @@ function GhReviewDialog({
       </header>
 
       <div className="hairline flex items-center gap-2 border-b px-6 py-2.5">
-        <Button
-          disabled={busy}
-          onClick={() =>
-            void call(
-              window.sully.fetchGhComments(issue.issueId),
-              `Re-fetching GitHub comments for ${issue.identifier}`
-            )
-          }
-          title="Fetch the PR's review comments again and replace this list"
-        >
-          <RotateCcw size={11} className={cn(busy && 'animate-spin')} />
-          {busy ? 'Working…' : 'Re-run GitHub fetch'}
-        </Button>
         {issue.repoPath && (
           <Button
             onClick={() => setTermOpen(!termOpen)}
@@ -699,16 +687,6 @@ function GhReviewDialog({
                   <div className="prose-plan mt-1 text-[12.5px]">
                     <ReactMarkdown>{item.comment}</ReactMarkdown>
                   </div>
-                  {item.suggestion && (
-                    <div className="hairline mt-2 rounded-lg border bg-ink-950/40 px-3 py-2">
-                      <p className="mb-0.5 font-mono text-[10px] uppercase tracking-wider text-sage-400">
-                        suggested fix
-                      </p>
-                      <div className="prose-plan text-[12px]">
-                        <ReactMarkdown>{item.suggestion}</ReactMarkdown>
-                      </div>
-                    </div>
-                  )}
                 </div>
               </label>
             ))}
@@ -912,6 +890,58 @@ function IssueCard({
 
       <p className="mt-1.5 line-clamp-2 text-[13px] leading-snug text-ink-50">{issue.title}</p>
 
+      {issue.prUrl &&
+        ((issue.ciStatus && issue.ciStatus.state !== 'none') ||
+          (issue.prReview && issue.prReview !== 'none')) && (
+          <div className="mt-2 flex items-center gap-1.5">
+            {issue.ciStatus && issue.ciStatus.state !== 'none' && (
+              <span
+                className={cn(
+                  'rounded px-1.5 py-px font-mono text-[10px]',
+                  issue.ciStatus.state === 'fail' && 'bg-terra-500/15 text-terra-400',
+                  issue.ciStatus.state === 'pending' && 'bg-ink-700 text-ink-300',
+                  issue.ciStatus.state === 'pass' && 'bg-sage-500/15 text-sage-400'
+                )}
+                title={
+                  issue.ciStatus.state === 'fail'
+                    ? `Failing: ${issue.ciStatus.failed.join(', ')}${issue.ciFixAttemptShas?.length ? ` — ${issue.ciFixAttemptShas.length} auto-fix attempt${issue.ciFixAttemptShas.length === 1 ? '' : 's'}` : ''}`
+                    : `Checks ${issue.ciStatus.state === 'pass' ? 'passing' : 'running'} (${timeAgo(issue.ciStatus.checkedAt)})`
+                }
+              >
+                {issue.ciStatus.state === 'fail'
+                  ? '✕'
+                  : issue.ciStatus.state === 'pending'
+                    ? '●'
+                    : '✓'}{' '}
+                CI
+              </span>
+            )}
+            {issue.prReview && issue.prReview !== 'none' && (
+              <span
+                className={cn(
+                  'rounded px-1.5 py-px font-mono text-[10px]',
+                  issue.prReview === 'approved' && 'bg-sage-500/15 text-sage-400',
+                  issue.prReview === 'changes_requested' && 'bg-terra-500/15 text-terra-400',
+                  issue.prReview === 'review_required' && 'bg-ink-700 text-ink-300'
+                )}
+                title={
+                  issue.prReview === 'approved'
+                    ? 'PR approved'
+                    : issue.prReview === 'changes_requested'
+                      ? 'A reviewer requested changes'
+                      : 'PR awaiting review'
+                }
+              >
+                {issue.prReview === 'approved'
+                  ? '✓ approved'
+                  : issue.prReview === 'changes_requested'
+                    ? '± changes'
+                    : '○ review'}
+              </span>
+            )}
+          </div>
+        )}
+
       {running && session?.lastText && (
         <p className="mt-2 line-clamp-2 font-mono text-[10.5px] leading-relaxed text-ink-300">
           {session.lastText}
@@ -1036,28 +1066,16 @@ function IssueCard({
           !issue.activeSessionId &&
           issue.prUrl &&
           issue.repoPath &&
-          (issue.ghReviewItems ? (
+          (issue.ghReviewItems?.length ?? 0) > 0 && (
             <Button
+              variant="primary"
               onClick={onViewGhReview}
               className="ml-1"
-              title="Open the fetched GitHub review comments"
+              title="Open the PR's review comments — suggest or address fixes from there"
             >
-              <MessagesSquare size={11} /> View GitHub review
+              <MessagesSquare size={11} /> View GitHub review ({issue.ghReviewItems!.length})
             </Button>
-          ) : (
-            <Button
-              onClick={() =>
-                void call(
-                  window.sully.fetchGhComments(issue.issueId),
-                  `Fetching GitHub comments for ${issue.identifier}`
-                )
-              }
-              className="ml-1"
-              title="Fetch review comments from the GitHub PR into a document"
-            >
-              <MessagesSquare size={11} /> Fetch GitHub comments
-            </Button>
-          ))}
+          )}
       </div>
     </div>
   )

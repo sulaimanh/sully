@@ -10,6 +10,7 @@ import type {
   Deploy,
   DeployBump,
   DevServer,
+  DoctorCheck,
   DoctorReport,
   ErrorSource,
   ErrorTrackingIssue,
@@ -52,6 +53,7 @@ const api = {
     ipcRenderer.invoke(IPC.linearCreateIssue, input),
   listSkills: (): Promise<string[]> => ipcRenderer.invoke(IPC.skillsList),
   listMcpServers: (): Promise<string[]> => ipcRenderer.invoke(IPC.mcpServersList),
+  mcpLogin: (name: string): Promise<DoctorCheck> => ipcRenderer.invoke(IPC.mcpLogin, name),
   orchestratorSetEnabled: (enabled: boolean): Promise<void> =>
     ipcRenderer.invoke(IPC.orchestratorSetEnabled, enabled),
   approvePlan: (issueId: string): Promise<void> =>
@@ -66,8 +68,6 @@ const api = {
   ): Promise<void> => ipcRenderer.invoke(IPC.issueAnswerPlanQuestions, issueId, answers),
   repromptIssue: (issueId: string, prompt: string): Promise<void> =>
     ipcRenderer.invoke(IPC.issueReprompt, issueId, prompt),
-  fetchGhComments: (issueId: string): Promise<void> =>
-    ipcRenderer.invoke(IPC.issueFetchGhComments, issueId),
   addressGhComments: (issueId: string, itemIds: string[]): Promise<void> =>
     ipcRenderer.invoke(IPC.issueAddressGhComments, issueId, itemIds),
   retryIssue: (issueId: string): Promise<void> => ipcRenderer.invoke(IPC.issueRetry, issueId),

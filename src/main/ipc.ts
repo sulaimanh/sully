@@ -36,7 +36,7 @@ import {
   fetchWorkflowStates
 } from './linear/operations'
 import { ghAuthStatus } from './github/gh'
-import { runDoctor } from './doctor'
+import { loginMcpServer, runDoctor } from './doctor'
 import { toolHealthMonitor } from './tool-health'
 import { planUsageMonitor } from './plan-usage'
 import { listGlobalSkills } from './skills'
@@ -131,6 +131,7 @@ export function registerIpc(): void {
   })
   ipcMain.handle(IPC.skillsList, () => listGlobalSkills())
   ipcMain.handle(IPC.mcpServersList, () => listGlobalMcpServerNames())
+  ipcMain.handle(IPC.mcpLogin, (_e, name: string) => loginMcpServer(name))
 
   ipcMain.handle(IPC.orchestratorSetEnabled, (_e, enabled: boolean) => {
     settingsStore.update((s) => {
@@ -153,9 +154,6 @@ export function registerIpc(): void {
   )
   ipcMain.handle(IPC.issueReprompt, (_e, issueId: string, prompt: string) =>
     orchestrator.reprompt(issueId, prompt)
-  )
-  ipcMain.handle(IPC.issueFetchGhComments, (_e, issueId: string) =>
-    orchestrator.fetchGhComments(issueId)
   )
   ipcMain.handle(IPC.issueAddressGhComments, (_e, issueId: string, itemIds: string[]) =>
     orchestrator.addressGhComments(issueId, itemIds)

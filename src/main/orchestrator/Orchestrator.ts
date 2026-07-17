@@ -5,7 +5,6 @@ import * as path from 'path'
 import type {
   BoardColumn,
   ColumnMapping,
-  GhReviewItem,
   PhaseConfig,
   PlanQuestion,
   Session,
@@ -17,7 +16,6 @@ import { processManager } from '../process/ProcessManager'
 import { ensureWorktree, headSha, remoteBranchSha } from './worktrees'
 import {
   FEEDBACK_REPLY_FILE_REL,
-  GH_REVIEW_FILE_REL,
   PLAN_FILE_REL,
   PLAN_QUESTIONS_FILE_REL,
   buildCodingCommand,
@@ -27,7 +25,6 @@ import {
   buildPlanChatResumeCommand,
   buildPlanFeedbackCommand,
   buildPlanningCommand,
-  buildFetchCommentsCommand,
   buildPlanningResumeCommand,
   buildRepromptCommand,
   buildRepromptResumeCommand
@@ -41,7 +38,7 @@ import {
   postComment,
   type LinearIssueNode
 } from '../linear/operations'
-import { createPr, prForBranch } from '../github/gh'
+import { createPr, failedRunLogs, prChecks, prForBranch, prReviewComments } from '../github/gh'
 
 const PLAN_MARKER = (issueId: string): string => `<!-- sully:plan issueId=${issueId} v=1 -->`
 // plan comments posted before the conductor→sully rename must stay recognized
@@ -110,47 +107,7 @@ function planTextFromBody(issueId: string, body: string): string {
     .trim()
 }
 
-/**
- * Parse the fetch session's JSON into review items, tolerating the usual model
- * slips (code fences, an {items: []} wrapper, junk entries). Ids are assigned
- * from the index — selection only ever references the stored array.
- */
-function parseGhReviewItems(raw: string): GhReviewItem[] | null {
-  const stripped = raw
-    .trim()
-    .replace(/^```(?:json)?\s*/i, '')
-    .replace(/```\s*$/, '')
-  let parsed: unknown
-  try {
-    parsed = JSON.parse(stripped)
-  } catch {
-    return null
-  }
-  const arr = Array.isArray(parsed)
-    ? parsed
-    : Array.isArray((parsed as { items?: unknown })?.items)
-      ? (parsed as { items: unknown[] }).items
-      : null
-  if (!arr) return null
-  return arr
-    .filter(
-      (x): x is Record<string, unknown> =>
-        typeof x === 'object' &&
-        x !== null &&
-        typeof (x as Record<string, unknown>).comment === 'string' &&
-        Boolean(((x as Record<string, unknown>).comment as string).trim())
-    )
-    .map((x, idx) => ({
-      id: String(idx),
-      author: typeof x.author === 'string' ? x.author : undefined,
-      file: typeof x.file === 'string' ? x.file : undefined,
-      line: typeof x.line === 'number' ? x.line : undefined,
-      comment: x.comment as string,
-      suggestion: typeof x.suggestion === 'string' ? x.suggestion : undefined
-    }))
-}
-
-/** Parse the planning session's questions JSON, tolerating the same model slips. */
+/** Parse the planning session's questions JSON, tolerating the usual model slips. */
 function parsePlanQuestions(raw: string): PlanQuestion[] | null {
   const stripped = raw
     .trim()
@@ -552,10 +509,15 @@ export class Orchestrator extends EventEmitter {
         break
       case 'inReview':
         if (local.phase !== 'in_review' && local.phase !== 'error') local.phase = 'in_review'
-        this.restoreGhReview(local)
         this.save(local)
         if (act && local.phase === 'in_review') {
           await this.checkReprompt(local)
+        }
+        // CI/review status is read-only board sync — it refreshes even with
+        // automation off; only the fix sessions require act. User comments
+        // take priority: skip when checkReprompt spawned a session.
+        if (!local.activeSessionId && local.phase === 'in_review') {
+          await this.checkCiAutoFix(local, act)
         }
         break
     }
@@ -628,13 +590,12 @@ export class Orchestrator extends EventEmitter {
       return
     }
 
-    // inReview — track read-only
+    // inReview — track read-only; review comments auto-populate on the next poll
     const issue = this.toTracked(node, 'in_review')
     if (issue.repoPath && issue.branchName) {
       const pr = await prForBranch(issue.repoPath, issue.branchName)
       if (pr) issue.prUrl = pr.url
     }
-    this.restoreGhReview(issue)
     this.save(issue)
   }
 
@@ -1070,21 +1031,6 @@ export class Orchestrator extends EventEmitter {
   }
 
   /**
-   * Restore fetched review items from the worktree file when local state lacks
-   * them (cleared state, re-discovery, schema change) — the worktree file is
-   * the durable copy; state is just a cache of it.
-   */
-  private restoreGhReview(issue: TrackedIssue): void {
-    if (issue.ghReviewItems || !issue.repoPath) return
-    const wt = this.worktreePathFor(issue)
-    if (!wt) return
-    const file = path.join(wt, GH_REVIEW_FILE_REL)
-    if (!fs.existsSync(file)) return
-    const items = parseGhReviewItems(fs.readFileSync(file, 'utf8'))
-    if (items) issue.ghReviewItems = items
-  }
-
-  /**
    * Ensure the worktree plan file exists (it is the source of truth, but the
    * worktree may have been recreated) — restore from the board's cached copy,
    * or a legacy Linear plan comment as a last resort.
@@ -1165,75 +1111,139 @@ export class Orchestrator extends EventEmitter {
   }
 
   /**
-   * User clicked "Fetch GitHub comments" (or the modal's re-run) on an
-   * in-review card — explicit action, works with automation off. Fetch only:
-   * the session writes the PR's review comments to a markdown document, which
-   * is stored on the ticket and rendered by the "View GitHub review" modal.
-   * The ticket stays in review the whole time — no code is touched.
+   * Watch the PR's checks and review decision while the ticket sits in
+   * review; when CI settles red (and auto-fix is on), resume the coding
+   * conversation with the failure logs so it can fix and push. Attempts are
+   * SHA-deduped and capped, so a red streak can never loop forever — after a
+   * give-up the Retry button re-arms it.
    */
-  async fetchGhComments(issueId: string): Promise<void> {
-    const issue = this.store.get(issueId)
-    if (!issue || issue.phase !== 'in_review' || issue.activeSessionId || !issue.repoPath) return
-    const config = settingsStore.get().phases.fetchComments
+  private async checkCiAutoFix(issue: TrackedIssue, act: boolean): Promise<void> {
+    const settings = settingsStore.get()
+    if (!issue.prUrl || !issue.repoPath || !issue.branchName || issue.activeSessionId) return
 
-    this.busy.add(issue.issueId)
-    try {
-      issue.worktreePath = await ensureWorktree(issue.repoPath, issue.branchName)
-      // a document from a previous run must not be mistaken for this session's
-      fs.rmSync(path.join(issue.worktreePath, GH_REVIEW_FILE_REL), { force: true })
-
-      const session = processManager.start({
-        kind: 'fetch_comments',
-        agent: config.agent,
-        model: config.model,
-        command: buildFetchCommentsCommand(config, issue, issue.worktreePath),
-        cwd: issue.worktreePath,
-        timeoutMs: config.timeoutMs,
-        issueId: issue.issueId,
-        issueIdentifier: issue.identifier
-      })
-      issue.activeSessionId = session.id
-      issue.lastError = undefined
-      this.save(issue)
-    } finally {
-      this.busy.delete(issue.issueId)
-    }
-  }
-
-  private async handleFetchCommentsFinished(issue: TrackedIssue, session: Session): Promise<void> {
-    issue.activeSessionId = undefined
-    if (session.status !== 'done') {
-      // a user-stopped fetch is not an error — quietly keep whatever document
-      // the ticket already had
-      if (session.status === 'stopped') {
+    const checks = await prChecks(issue.repoPath, issue.branchName)
+    if (!checks) return
+    if (checks.state !== 'OPEN') {
+      // merged/closed mid-loop — nothing left to watch
+      if (issue.ciStatus || issue.ciFixAttemptShas || issue.prReview || issue.ghReviewItems) {
+        issue.ciStatus = undefined
+        issue.ciFixAttemptShas = undefined
+        issue.prReview = undefined
+        issue.ghReviewItems = undefined
         this.save(issue)
-        return
       }
-      this.fail(issue.issueId, sessionFailure('fetch comments', session))
       return
     }
-    const file = issue.worktreePath ? path.join(issue.worktreePath, GH_REVIEW_FILE_REL) : null
-    const raw = file && fs.existsSync(file) ? fs.readFileSync(file, 'utf8') : ''
-    const items = raw ? parseGhReviewItems(raw) : null
-    if (!items) {
+
+    // review comments auto-populate the "View GitHub review" modal; a failed
+    // fetch (null) keeps the last known list
+    const prRef = issue.prUrl.match(/github\.com\/([^/]+)\/([^/]+)\/pull\/(\d+)/)
+    const comments = prRef ? await prReviewComments(prRef[1], prRef[2], Number(prRef[3])) : null
+    let itemsChanged = false
+    if (comments) {
+      itemsChanged = JSON.stringify(comments) !== JSON.stringify(issue.ghReviewItems ?? [])
+      if (itemsChanged) issue.ghReviewItems = comments
+    }
+
+    const review = (
+      {
+        APPROVED: 'approved',
+        CHANGES_REQUESTED: 'changes_requested',
+        REVIEW_REQUIRED: 'review_required'
+      } as const
+    )[checks.reviewDecision as string]
+    const failedNames = checks.failed.map((f) => f.name)
+    // save only on meaningful change — every save rewrites state.json and
+    // pings the renderer, so don't churn on the checkedAt timestamp alone
+    if (
+      issue.ciStatus?.state !== checks.overall ||
+      issue.ciStatus?.headSha !== checks.headSha ||
+      issue.prReview !== (review ?? 'none') ||
+      itemsChanged
+    ) {
+      issue.ciStatus = {
+        state: checks.overall,
+        headSha: checks.headSha,
+        failed: failedNames,
+        checkedAt: new Date().toISOString()
+      }
+      issue.prReview = review ?? 'none'
+      this.save(issue)
+    }
+
+    // everything below acts on a red streak — that requires automation on
+    // (act) and the auto-fix toggle; the status refresh above is always-on
+    if (!act || !settings.orchestrator.ciAutoFix) return
+    if (checks.overall === 'pending') return
+    if (checks.overall !== 'fail') {
+      if (issue.ciFixAttemptShas?.length) {
+        issue.ciFixAttemptShas = undefined
+        this.save(issue)
+        this.emit('notify', {
+          title: `${issue.identifier} CI green`,
+          body: 'Checks passing after auto-fix.',
+          view: 'board'
+        })
+      }
+      return
+    }
+
+    const sha7 = checks.headSha.slice(0, 7)
+    const attempts = issue.ciFixAttemptShas ?? []
+    if (attempts.includes(checks.headSha)) {
+      // the fix attempt produced no new commit (judged flaky, or the push
+      // failed) — rerunning on identical input would loop, so give up once
       this.fail(
         issue.issueId,
-        raw
-          ? 'fetch comments session wrote an unparseable review file — re-run the fetch'
-          : 'fetch comments session finished but produced no review file'
+        `CI still failing on ${sha7} after an auto-fix attempt that produced no new commit — see the ticket chat, fix manually, or Retry to re-arm auto-fix.`
       )
       return
     }
-    issue.ghReviewItems = items
-    issue.lastError = undefined
+    const max = settings.orchestrator.ciMaxFixAttempts
+    if (attempts.length >= max) {
+      this.fail(
+        issue.issueId,
+        `CI still failing after ${attempts.length} auto-fix attempt${attempts.length === 1 ? '' : 's'} (${failedNames.join(', ')}) — fix manually or Retry to re-arm auto-fix.`
+      )
+      return
+    }
+    if (processManager.runningCount('reprompt') >= settings.orchestrator.maxConcurrentCoding) {
+      return // retries next poll
+    }
+
+    const logs = await failedRunLogs(
+      issue.repoPath,
+      checks.failed.map((f) => f.link)
+    )
+    const attempt = attempts.length + 1
+    const prompt = [
+      `Automated CI report — the checks on this ticket's pull request (${issue.prUrl}) failed at commit ${sha7} (auto-fix attempt ${attempt} of ${max}).`,
+      [
+        'Failing checks:',
+        ...checks.failed.map((f) => `- ${f.name}${f.link ? ` — ${f.link}` : ''}`)
+      ].join('\n'),
+      logs
+        ? `Failed-step logs (truncated — fetch more yourself with \`gh run view <run-id> --log-failed\` if needed):\n"""\n${logs}\n"""`
+        : '',
+      "Diagnose the failures and fix the code (or tests/config) in this worktree. Where a check has no logs above, reproduce it locally (run the project's lint/typecheck/tests). Verify locally, then commit and push so CI re-runs. If a failure is flaky or infrastructural and no code change is warranted, say so in your reply and change nothing."
+    ]
+      .filter(Boolean)
+      .join('\n\n')
+
+    // record before spawning so a crash mid-fix can never double-attempt a SHA
+    issue.ciFixAttemptShas = [...attempts, checks.headSha].slice(-10)
+    this.appendChat(
+      issue,
+      'user',
+      `CI auto-fix (attempt ${attempt}/${max}): checks failed on ${sha7} — ${failedNames.join(', ')}`
+    )
     this.save(issue)
     this.emit('notify', {
-      title: `${issue.identifier} GitHub review fetched`,
-      body: items.length
-        ? `${items.length} review comment${items.length === 1 ? '' : 's'} — open "View GitHub review" on the card.`
-        : 'No open review comments on the PR.',
+      title: `${issue.identifier} CI failed`,
+      body: `Auto-fixing (attempt ${attempt}/${max}): ${failedNames.join(', ')}`.slice(0, 200),
       view: 'board'
     })
+    await this.startReprompt(issue, [prompt], [])
   }
 
   /**
@@ -1254,9 +1264,7 @@ export class Orchestrator extends EventEmitter {
       ]
         .filter(Boolean)
         .join(' — ')
-      return [where, i.comment, i.suggestion ? `Suggested fix: ${i.suggestion}` : '']
-        .filter(Boolean)
-        .join('\n')
+      return [where, i.comment].filter(Boolean).join('\n')
     })
     const prompt = [
       `Address ${items.length === 1 ? 'this review comment' : `these ${items.length} review comments`} from the GitHub review of this ticket's PR:`,
@@ -1640,8 +1648,12 @@ export class Orchestrator extends EventEmitter {
     else if (session.kind === 'coding') await this.handleCodingFinished(issue, session)
     else if (session.kind === 'create_pr') await this.handleCreatePrFinished(issue, session)
     else if (session.kind === 'reprompt') await this.handleRepromptFinished(issue, session)
-    else if (session.kind === 'fetch_comments')
-      await this.handleFetchCommentsFinished(issue, session)
+    else if (session.kind === 'fetch_comments') {
+      // legacy fetch session from before the poll auto-fetched comments —
+      // nothing to parse anymore, just release the ticket
+      issue.activeSessionId = undefined
+      this.save(issue)
+    }
   }
 
   /** Two-writer guard: only move if the user hasn't already moved it elsewhere. */
@@ -1689,6 +1701,8 @@ export class Orchestrator extends EventEmitter {
           : column === 'uncategorized'
             ? 'uncategorized'
             : 'in_review'
+      // an explicit retry re-arms CI auto-fix after a give-up
+      issue.ciFixAttemptShas = undefined
       this.save(issue)
     }
   }

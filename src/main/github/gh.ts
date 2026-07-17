@@ -157,6 +157,193 @@ export async function prForBranch(
   }
 }
 
+export interface PrCheckFailure {
+  name: string
+  link?: string
+}
+
+export interface PrChecksResult {
+  state: 'OPEN' | 'MERGED' | 'CLOSED'
+  headSha: string
+  /** 'pending' while ANY check is unfinished — failures are only acted on once the run settles */
+  overall: 'pass' | 'fail' | 'pending' | 'none'
+  failed: PrCheckFailure[]
+  /** empty string when the repo requires no reviews */
+  reviewDecision: 'APPROVED' | 'CHANGES_REQUESTED' | 'REVIEW_REQUIRED' | ''
+}
+
+interface RollupNode {
+  __typename?: string
+  // CheckRun
+  name?: string
+  status?: string
+  conclusion?: string
+  detailsUrl?: string
+  // StatusContext
+  context?: string
+  state?: string
+  targetUrl?: string
+}
+
+/**
+ * CI state of the branch's PR via `gh pr view` (never `gh pr checks`, which
+ * exits non-zero on failing/pending checks). null when the branch has no PR
+ * or the API call failed.
+ */
+export async function prChecks(repoPath: string, branch: string): Promise<PrChecksResult | null> {
+  try {
+    const out = await gh(
+      ['pr', 'view', branch, '--json', 'state,headRefOid,statusCheckRollup,reviewDecision'],
+      repoPath
+    )
+    const pr = JSON.parse(out)
+    if (!pr?.headRefOid) return null
+    const nodes: RollupNode[] = pr.statusCheckRollup ?? []
+    let pending = false
+    const failed: PrCheckFailure[] = []
+    for (const n of nodes) {
+      if (n.__typename === 'StatusContext' || n.state !== undefined) {
+        // StatusContext (CircleCI, Vercel, …)
+        if (n.state === 'PENDING' || n.state === 'EXPECTED') pending = true
+        else if (n.state === 'FAILURE' || n.state === 'ERROR')
+          failed.push({ name: n.context ?? 'status', link: n.targetUrl ?? undefined })
+      } else {
+        // CheckRun (GitHub Actions et al). ACTION_REQUIRED = awaiting workflow
+        // approval, not code-fixable; CANCELLED is usually a superseded run.
+        if (n.status !== 'COMPLETED' || n.conclusion === 'ACTION_REQUIRED') pending = true
+        else if (
+          n.conclusion === 'FAILURE' ||
+          n.conclusion === 'TIMED_OUT' ||
+          n.conclusion === 'STARTUP_FAILURE'
+        )
+          failed.push({ name: n.name ?? 'check', link: n.detailsUrl ?? undefined })
+      }
+    }
+    const overall =
+      nodes.length === 0 ? 'none' : pending ? 'pending' : failed.length ? 'fail' : 'pass'
+    return {
+      state: pr.state,
+      headSha: pr.headRefOid,
+      overall,
+      failed,
+      reviewDecision: pr.reviewDecision ?? ''
+    }
+  } catch {
+    return null
+  }
+}
+
+interface CommentAuthor {
+  __typename?: string
+  login?: string
+}
+
+export interface PrComment {
+  /** GraphQL node id — stable across refetches */
+  id: string
+  author?: string
+  /** file path + line the comment targets (review threads only) */
+  file?: string
+  line?: number
+  /** the comment body (markdown); thread replies appended inline */
+  comment: string
+}
+
+/**
+ * Open human comments on a PR: conversation comments plus unresolved review
+ * threads, excluding bots and the viewer's own thread-starters. null when
+ * the API call failed (so callers keep their last known list).
+ */
+export async function prReviewComments(
+  owner: string,
+  repo: string,
+  num: number
+): Promise<PrComment[] | null> {
+  try {
+    const me = await currentGhUser()
+    const out = await gh([
+      'api',
+      'graphql',
+      '-f',
+      'query=query($o:String!,$r:String!,$n:Int!){repository(owner:$o,name:$r){pullRequest(number:$n){comments(first:100){nodes{id author{__typename login} body}} reviewThreads(first:100){nodes{id isResolved path line comments(first:10){nodes{author{__typename login} body}}}}}}}',
+      '-f',
+      `o=${owner}`,
+      '-f',
+      `r=${repo}`,
+      '-F',
+      `n=${num}`
+    ])
+    const pr = JSON.parse(out)?.data?.repository?.pullRequest
+    if (!pr) return null
+    const isHuman = (a?: CommentAuthor): boolean =>
+      a?.__typename !== 'Bot' && a?.login !== me && a?.login !== undefined
+    const items: PrComment[] = []
+    const threads = (pr.reviewThreads?.nodes ?? []) as Array<{
+      id: string
+      isResolved?: boolean
+      path?: string
+      line?: number
+      comments?: { nodes?: Array<{ author?: CommentAuthor; body?: string }> }
+    }>
+    for (const t of threads) {
+      const first = t.comments?.nodes?.[0]
+      if (t.isResolved || !isHuman(first?.author)) continue
+      const replies = (t.comments?.nodes ?? [])
+        .slice(1)
+        .map((c) => `\n\n> ${c.author?.login ?? 'reply'}: ${c.body ?? ''}`)
+        .join('')
+      items.push({
+        id: t.id,
+        author: first?.author?.login,
+        file: t.path ?? undefined,
+        line: t.line ?? undefined,
+        comment: (first?.body ?? '') + replies
+      })
+    }
+    const conversation = (pr.comments?.nodes ?? []) as Array<{
+      id: string
+      author?: CommentAuthor
+      body?: string
+    }>
+    for (const c of conversation) {
+      if (!isHuman(c.author)) continue
+      items.push({ id: c.id, author: c.author?.login, comment: c.body ?? '' })
+    }
+    return items
+  } catch {
+    return null
+  }
+}
+
+/**
+ * Truncated failed-step logs for the GitHub Actions runs behind these check
+ * links, best effort — non-Actions checks (CircleCI, Vercel) yield nothing.
+ */
+export async function failedRunLogs(
+  repoPath: string,
+  links: Array<string | undefined>,
+  maxBytes = 30_000
+): Promise<string> {
+  const runIds = [
+    ...new Set(links.map((l) => l?.match(/\/actions\/runs\/(\d+)/)?.[1]).filter(Boolean))
+  ].slice(0, 2) as string[]
+  if (runIds.length === 0) return ''
+  const perRun = Math.floor(maxBytes / runIds.length)
+  const parts: string[] = []
+  for (const id of runIds) {
+    try {
+      const log = await gh(['run', 'view', id, '--log-failed'], repoPath)
+      if (!log.trim()) continue
+      // keep the tail — that's where the error is
+      const tail = log.length > perRun ? `…(truncated)\n${log.slice(-perRun)}` : log
+      parts.push(`### run ${id}\n${tail.trim()}`)
+    } catch {
+      // in-progress run or log expired — the prompt degrades to names + links
+    }
+  }
+  return parts.join('\n\n')
+}
+
 export async function createPr(
   repoPath: string,
   branch: string,
