@@ -294,11 +294,15 @@ export default function App(): ReactElement {
             </div>
             {view === 'settings' && <SettingsView />}
           </div>
-          {/* DockablePanel portals here in bottom mode */}
-          <div id="dock-bottom" className="flex min-h-0 shrink-0 flex-col" />
+          {/* DockablePanel portals here in bottom mode. display:contents makes
+              panels direct flex items of <main> — a wrapper would size to the
+              panel's min-content and ignore its flex-basis */}
+          <div id="dock-bottom" className="contents" />
         </main>
-        {/* DockablePanel portals here in sidebar mode */}
-        <div id="dock-right" className="flex min-w-0 shrink-0" />
+        {/* DockablePanel portals here in sidebar mode. display:contents makes
+            panels direct flex items of the row — a wrapper would size to the
+            panel's min-content and ignore its flex-basis */}
+        <div id="dock-right" className="contents" />
         {browserOpen && <BrowserPanel />}
       </div>
       {shortcutsOpen && <ShortcutsModal />}

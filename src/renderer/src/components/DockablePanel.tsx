@@ -21,24 +21,33 @@ interface PanelLayout {
   modalHeight: number | null
 }
 
-const FALLBACK: PanelLayout = {
+/** docked panels default to half the window; sized at open, px once dragged */
+const fallbackLayout = (): PanelLayout => ({
   mode: 'modal',
-  sidebarWidth: 480,
-  bottomHeight: 360,
+  sidebarWidth: Math.round(window.innerWidth / 2),
+  bottomHeight: Math.round(window.innerHeight / 2),
   modalWidth: null,
   modalHeight: null
-}
+})
 
 const layoutKey = (id: string): string => `sully:panel-layout:${id}`
 
 function loadLayout(id: string): PanelLayout {
+  const fallback = fallbackLayout()
   try {
     const raw = localStorage.getItem(layoutKey(id))
-    if (raw) return { ...FALLBACK, ...(JSON.parse(raw) as Partial<PanelLayout>) }
+    if (raw) {
+      const stored = JSON.parse(raw) as Partial<PanelLayout>
+      // the pre-half-view defaults were fixed pixels and got persisted on any
+      // layout write (e.g. a mode switch) — treat them as never customized
+      if (stored.sidebarWidth === 480) delete stored.sidebarWidth
+      if (stored.bottomHeight === 360) delete stored.bottomHeight
+      return { ...fallback, ...stored }
+    }
   } catch {
     // corrupt entry — fall back to defaults
   }
-  return { ...FALLBACK }
+  return fallback
 }
 
 const clamp = (v: number, lo: number, hi: number): number => Math.min(hi, Math.max(lo, v))
@@ -87,23 +96,34 @@ export function DragHandle({
   onMove: (dx: number, dy: number) => void
 }): ReactElement {
   const start = useRef({ x: 0, y: 0 })
+  const [dragging, setDragging] = useState(false)
   return (
-    <div
-      className={cn(
-        'transition-colors duration-150 hover:bg-brass-400/60 active:bg-brass-400',
-        className
-      )}
-      onPointerDown={(e) => {
-        e.preventDefault()
-        start.current = { x: e.clientX, y: e.clientY }
-        onStart()
-        e.currentTarget.setPointerCapture(e.pointerId)
-      }}
-      onPointerMove={(e) => {
-        if (!e.currentTarget.hasPointerCapture(e.pointerId)) return
-        onMove(e.clientX - start.current.x, e.clientY - start.current.y)
-      }}
-    />
+    <>
+      <div
+        className={cn(
+          'transition-colors duration-150 hover:bg-brass-400/60 active:bg-brass-400',
+          className
+        )}
+        onPointerDown={(e) => {
+          e.preventDefault()
+          start.current = { x: e.clientX, y: e.clientY }
+          onStart()
+          setDragging(true)
+          e.currentTarget.setPointerCapture(e.pointerId)
+        }}
+        onPointerMove={(e) => {
+          if (!e.currentTarget.hasPointerCapture(e.pointerId)) return
+          onMove(e.clientX - start.current.x, e.clientY - start.current.y)
+        }}
+        onPointerUp={() => setDragging(false)}
+        onLostPointerCapture={() => setDragging(false)}
+      />
+      {dragging &&
+        // webview guests swallow pointer events routed over their bounds (the
+        // embedder's pointer capture never sees them), freezing the drag the
+        // moment the cursor crosses a webview — shield the app while dragging
+        createPortal(<div className="fixed inset-0 z-[999]" />, document.body)}
+    </>
   )
 }
 
@@ -158,8 +178,10 @@ export default function DockablePanel({
   if (layout.mode === 'sidebar') {
     return createPortal(
       <div
-        style={{ width: Math.min(layout.sidebarWidth, window.innerWidth * 0.75) }}
-        className="hairline-strong relative flex h-full min-h-0 shrink-0 flex-col overflow-hidden border-l bg-ink-900"
+        // flex-basis (not width) + shrink: several docked panels must share the
+        // window instead of pushing each other offscreen
+        style={{ flexBasis: Math.min(layout.sidebarWidth, window.innerWidth * 0.75) }}
+        className="hairline-strong relative flex h-full min-h-0 min-w-[320px] shrink flex-col overflow-hidden border-l bg-ink-900"
       >
         <DragHandle
           className="absolute inset-y-0 left-0 z-10 w-[5px] cursor-col-resize"
@@ -179,8 +201,8 @@ export default function DockablePanel({
   if (layout.mode === 'bottom') {
     return createPortal(
       <div
-        style={{ height: Math.min(layout.bottomHeight, window.innerHeight * 0.8) }}
-        className="hairline-strong relative flex w-full min-w-0 shrink-0 flex-col overflow-hidden border-t bg-ink-900"
+        style={{ flexBasis: Math.min(layout.bottomHeight, window.innerHeight * 0.8) }}
+        className="hairline-strong relative flex w-full min-h-[160px] min-w-0 shrink flex-col overflow-hidden border-t bg-ink-900"
       >
         <DragHandle
           className="absolute inset-x-0 top-0 z-10 h-[5px] cursor-row-resize"
