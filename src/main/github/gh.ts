@@ -247,6 +247,8 @@ export interface PrComment {
   line?: number
   /** the comment body (markdown); thread replies appended inline */
   comment: string
+  /** when the comment (or thread's first comment) was posted */
+  createdAt?: string
 }
 
 /**
@@ -265,7 +267,7 @@ export async function prReviewComments(
       'api',
       'graphql',
       '-f',
-      'query=query($o:String!,$r:String!,$n:Int!){repository(owner:$o,name:$r){pullRequest(number:$n){comments(first:100){nodes{id author{__typename login} body}} reviewThreads(first:100){nodes{id isResolved path line comments(first:10){nodes{author{__typename login} body}}}}}}}',
+      'query=query($o:String!,$r:String!,$n:Int!){repository(owner:$o,name:$r){pullRequest(number:$n){comments(first:100){nodes{id author{__typename login} body createdAt}} reviewThreads(first:100){nodes{id isResolved path line comments(first:10){nodes{author{__typename login} body createdAt}}}}}}}',
       '-f',
       `o=${owner}`,
       '-f',
@@ -283,7 +285,7 @@ export async function prReviewComments(
       isResolved?: boolean
       path?: string
       line?: number
-      comments?: { nodes?: Array<{ author?: CommentAuthor; body?: string }> }
+      comments?: { nodes?: Array<{ author?: CommentAuthor; body?: string; createdAt?: string }> }
     }>
     for (const t of threads) {
       const first = t.comments?.nodes?.[0]
@@ -297,17 +299,24 @@ export async function prReviewComments(
         author: first?.author?.login,
         file: t.path ?? undefined,
         line: t.line ?? undefined,
-        comment: (first?.body ?? '') + replies
+        comment: (first?.body ?? '') + replies,
+        createdAt: first?.createdAt
       })
     }
     const conversation = (pr.comments?.nodes ?? []) as Array<{
       id: string
       author?: CommentAuthor
       body?: string
+      createdAt?: string
     }>
     for (const c of conversation) {
       if (!isHuman(c.author)) continue
-      items.push({ id: c.id, author: c.author?.login, comment: c.body ?? '' })
+      items.push({
+        id: c.id,
+        author: c.author?.login,
+        comment: c.body ?? '',
+        createdAt: c.createdAt
+      })
     }
     return items
   } catch {

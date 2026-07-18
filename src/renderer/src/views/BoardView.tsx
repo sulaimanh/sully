@@ -33,6 +33,7 @@ import type {
   BoardColumn,
   DeployBump,
   DevServer,
+  GhReviewItem,
   IssueComment,
   IssuePhase,
   Session,
@@ -606,15 +607,20 @@ function GhReviewDialog({
 }): ReactElement {
   const busy = Boolean(issue.activeSessionId)
   const items = issue.ghReviewItems ?? []
+  // newest first; addressed items sink to the bottom as a display-only record
+  const byNewest = (a: GhReviewItem, b: GhReviewItem): number =>
+    (b.createdAt ?? '').localeCompare(a.createdAt ?? '')
+  const open = items.filter((i) => !i.addressedAt).sort(byNewest)
+  const addressed = items.filter((i) => i.addressedAt).sort(byNewest)
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const [termOpen, setTermOpen] = useState(false)
 
   // the poll refreshes items in place (ids are stable) — drop picks whose
-  // comment disappeared (resolved/deleted), keep the rest
+  // comment disappeared (resolved/deleted) or got addressed, keep the rest
   const [seenItems, setSeenItems] = useState(issue.ghReviewItems)
   if (seenItems !== issue.ghReviewItems) {
     setSeenItems(issue.ghReviewItems)
-    setSelected(new Set([...selected].filter((id) => items.some((i) => i.id === id))))
+    setSelected(new Set([...selected].filter((id) => open.some((i) => i.id === id))))
   }
 
   const toggle = (id: string): void => {
@@ -677,7 +683,7 @@ function GhReviewDialog({
             </p>
           ) : (
             <div className="flex flex-col gap-2.5">
-              {items.map((item) => (
+              {open.map((item) => (
                 <label
                   key={item.id}
                   className={cn(
@@ -703,22 +709,47 @@ function GhReviewDialog({
                   </div>
                 </label>
               ))}
+              {addressed.length > 0 && (
+                <p className="mt-2 font-mono text-[10.5px] uppercase tracking-[0.18em] text-ink-500">
+                  addressed
+                </p>
+              )}
+              {addressed.map((item) => (
+                <div
+                  key={item.id}
+                  className="hairline flex gap-3 rounded-xl border bg-ink-850 p-3.5 opacity-55"
+                >
+                  <div className="min-w-0 flex-1">
+                    <p className="font-mono text-[10.5px] text-ink-400">
+                      {item.author && <span className="text-brass-300">{item.author}</span>}
+                      {item.author && item.file && ' — '}
+                      {item.file && `${item.file}${item.line ? `:${item.line}` : ''}`}
+                      <span className="ml-2 rounded bg-ink-700 px-1.5 py-0.5 text-[9.5px] uppercase tracking-wide text-ink-200">
+                        addressed {timeAgo(item.addressedAt!)}
+                      </span>
+                    </p>
+                    <div className="prose-plan mt-1 text-[12.5px]">
+                      <ReactMarkdown>{item.comment}</ReactMarkdown>
+                    </div>
+                  </div>
+                </div>
+              ))}
             </div>
           )}
         </div>
       </TerminalDock>
 
-      {items.length > 0 && (
+      {open.length > 0 && (
         <footer className="hairline flex items-center justify-between border-t px-6 py-3">
           <button
             className="text-[11px] text-ink-400 hover:text-ink-100"
             onClick={() =>
               setSelected(
-                selected.size === items.length ? new Set() : new Set(items.map((i) => i.id))
+                selected.size === open.length ? new Set() : new Set(open.map((i) => i.id))
               )
             }
           >
-            {selected.size === items.length ? 'clear selection' : 'select all'}
+            {selected.size === open.length ? 'clear selection' : 'select all'}
           </button>
           <Button variant="primary" disabled={busy || selected.size === 0} onClick={address}>
             <ThumbsUp size={11} /> Address selected ({selected.size})
@@ -891,8 +922,9 @@ function TicketDetailsDialog({
   const repoName = issue.repoPath?.split('/').pop()
   const description = (issue.description ?? '').trim()
   // closing only hides the pane — the pty keeps running and reattaches with
-  // its scrollback when reopened (same as PlanDialog / GhReviewDialog)
-  const [termOpen, setTermOpen] = useState(false)
+  // its scrollback when reopened (same as PlanDialog / GhReviewDialog).
+  // lives in the store so the pane survives switching views
+  const { detailsTermOpen: termOpen, setDetailsTermOpen: setTermOpen } = useApp()
   /** PR or Linear page shown in the in-dialog browser pane */
   const [browserUrl, setBrowserUrl] = useState<string | null>(null)
 
@@ -1331,12 +1363,16 @@ function IssueCard({
           issue.repoPath &&
           (issue.ghReviewItems?.length ?? 0) > 0 && (
             <Button
-              variant="primary"
+              variant={issue.ghReviewItems!.some((i) => !i.addressedAt) ? 'primary' : undefined}
               onClick={onViewGhReview}
               className="ml-1"
               title="Open the PR's review comments — suggest or address fixes from there"
             >
-              <MessagesSquare size={11} /> View GitHub review ({issue.ghReviewItems!.length})
+              <MessagesSquare size={11} />
+              {(() => {
+                const n = issue.ghReviewItems!.filter((i) => !i.addressedAt).length
+                return n > 0 ? `View GitHub review (${n})` : 'Review addressed'
+              })()}
             </Button>
           )}
       </div>
@@ -1490,8 +1526,10 @@ function DeployDialog({ onClose }: { onClose: () => void }): ReactElement {
 }
 
 export default function BoardView(): ReactElement {
-  const { issues, sessions, settings, devServers, deploys } = useApp()
-  const [detailsFor, setDetailsFor] = useState<TrackedIssue | null>(null)
+  const { issues, sessions, settings, devServers, deploys, detailsIssueId, setDetailsIssue } =
+    useApp()
+  // the open ticket-details panel lives in the store so it survives view switches
+  const detailsFor = detailsIssueId ? (issues[detailsIssueId] ?? null) : null
   const [planFor, setPlanFor] = useState<TrackedIssue | null>(null)
   const [questionsFor, setQuestionsFor] = useState<TrackedIssue | null>(null)
   const [logFor, setLogFor] = useState<Session | null>(null)
@@ -1619,7 +1657,7 @@ export default function BoardView(): ReactElement {
                   session={sessionFor(issue)}
                   devServer={devServers[issue.issueId]}
                   devCommand={devCommandFor(issue)}
-                  onViewDetails={() => setDetailsFor(issue)}
+                  onViewDetails={() => setDetailsIssue(issue.issueId)}
                   onViewPlan={() => setPlanFor(issue)}
                   onViewLog={() => {
                     const s = sessionFor(issue)
@@ -1684,7 +1722,7 @@ export default function BoardView(): ReactElement {
                         session={sessionFor(issue)}
                         devServer={devServers[issue.issueId]}
                         devCommand={devCommandFor(issue)}
-                        onViewDetails={() => setDetailsFor(issue)}
+                        onViewDetails={() => setDetailsIssue(issue.issueId)}
                         onViewPlan={() => setPlanFor(issue)}
                         onViewLog={() => {
                           const s = sessionFor(issue)
@@ -1712,8 +1750,8 @@ export default function BoardView(): ReactElement {
         <TicketDetailsDialog
           // keyed so opening a different ticket resets the browser/terminal panes
           key={detailsFor.issueId}
-          issue={issues[detailsFor.issueId] ?? detailsFor}
-          onClose={() => setDetailsFor(null)}
+          issue={detailsFor}
+          onClose={() => setDetailsIssue(null)}
         />
       )}
       {planFor && (

@@ -1,6 +1,7 @@
 // Shared contracts between main, preload, and renderer.
 
-export type PhaseKey = 'planning' | 'coding' | 'createPr' | 'prReview' | 'errorInvestigation'
+export type PhaseKey =
+  'planning' | 'coding' | 'createPr' | 'addressComments' | 'prReview' | 'errorInvestigation'
 
 export type AgentKind = 'claude' | 'codex'
 
@@ -146,6 +147,11 @@ export interface GhReviewItem {
   line?: number
   /** the reviewer's comment (markdown) */
   comment: string
+  /** when the comment was posted on GitHub — newest-first ordering in the modal */
+  createdAt?: string
+  /** set when an "Address selected" session was dispatched for this item; a new
+   *  reply in the thread clears it (the comment body changes on refetch) */
+  addressedAt?: string
 }
 
 export interface ChatMessage {
@@ -296,6 +302,7 @@ export interface PhaseSettings {
   planning: PhaseConfig
   coding: PhaseConfig
   createPr: PhaseConfig
+  addressComments: PhaseConfig
   prReview: PhaseConfig
   errorInvestigation: PhaseConfig
 }
@@ -517,6 +524,13 @@ export function defaultPhaseSettings(): PhaseSettings {
       model: 'haiku',
       permissionMode: 'bypass',
       timeoutMs: 15 * 60_000,
+      mcp: false
+    },
+    addressComments: {
+      agent: 'claude',
+      model: 'opus',
+      permissionMode: 'bypass',
+      timeoutMs: 90 * 60_000,
       mcp: false
     },
     prReview: {

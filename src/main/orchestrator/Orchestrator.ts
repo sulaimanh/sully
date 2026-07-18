@@ -5,6 +5,7 @@ import * as path from 'path'
 import type {
   BoardColumn,
   ColumnMapping,
+  GhReviewItem,
   PhaseConfig,
   PlanQuestion,
   Session,
@@ -978,8 +979,17 @@ export class Orchestrator extends EventEmitter {
     const comments = prRef ? await prReviewComments(prRef[1], prRef[2], Number(prRef[3])) : null
     let itemsChanged = false
     if (comments) {
-      itemsChanged = JSON.stringify(comments) !== JSON.stringify(issue.ghReviewItems ?? [])
-      if (itemsChanged) issue.ghReviewItems = comments
+      // carry addressed marks across refetches; a changed body (new thread
+      // reply) drops the mark so the comment becomes actionable again
+      const prev = new Map((issue.ghReviewItems ?? []).map((i) => [i.id, i]))
+      const merged: GhReviewItem[] = comments.map((c) => {
+        const old = prev.get(c.id)
+        return old?.addressedAt && old.comment === c.comment
+          ? { ...c, addressedAt: old.addressedAt }
+          : c
+      })
+      itemsChanged = JSON.stringify(merged) !== JSON.stringify(issue.ghReviewItems ?? [])
+      if (itemsChanged) issue.ghReviewItems = merged
     }
 
     const review = (
@@ -1091,7 +1101,10 @@ export class Orchestrator extends EventEmitter {
   async addressGhComments(issueId: string, itemIds: string[]): Promise<void> {
     const issue = this.store.get(issueId)
     if (!issue || issue.phase !== 'in_review' || issue.activeSessionId) return
-    const items = (issue.ghReviewItems ?? []).filter((i) => itemIds.includes(i.id))
+    // already-addressed items are display-only — never re-dispatch them
+    const items = (issue.ghReviewItems ?? []).filter(
+      (i) => itemIds.includes(i.id) && !i.addressedAt
+    )
     if (items.length === 0) return
 
     const blocks = items.map((i) => {
@@ -1117,10 +1130,19 @@ export class Orchestrator extends EventEmitter {
       `Address ${items.length} selected review comment${items.length === 1 ? '' : 's'}: ${labels.join(', ')}`
     )
     this.save(issue)
-    await this.startReprompt(issue, [prompt])
+    // dedicated phase config — its model wins, no feedbackModel swap
+    await this.startReprompt(issue, [prompt], settingsStore.get().phases.addressComments)
+    // mark after a successful dispatch so a failed spawn leaves them actionable
+    const at = new Date().toISOString()
+    for (const i of items) i.addressedAt = at
+    this.save(issue)
   }
 
-  private async startReprompt(issue: TrackedIssue, prompts: string[]): Promise<void> {
+  private async startReprompt(
+    issue: TrackedIssue,
+    prompts: string[],
+    configOverride?: PhaseConfig
+  ): Promise<void> {
     const settings = settingsStore.get()
     if (!issue.repoPath) return
 
@@ -1134,7 +1156,8 @@ export class Orchestrator extends EventEmitter {
       if (base) this.repromptBaseSha.set(issue.issueId, base)
       else this.repromptBaseSha.delete(issue.issueId)
 
-      const config = feedbackConfig(settings.phases.coding, settings.feedbackModel)
+      const config =
+        configOverride ?? feedbackConfig(settings.phases.coding, settings.feedbackModel)
       // resume the coding/chat conversation when its transcript exists locally
       // (cheap: no re-exploration); otherwise start fresh
       const resumeId =

@@ -579,6 +579,11 @@ const PHASES: Array<{ key: PhaseKey; title: string; blurb: string }> = [
   { key: 'planning', title: 'Planning', blurb: 'drafts the implementation plan' },
   { key: 'coding', title: 'Coding', blurb: 'implements the approved plan' },
   { key: 'createPr', title: 'Create PR', blurb: 'commits, pushes, and opens the PR' },
+  {
+    key: 'addressComments',
+    title: 'Address Comments',
+    blurb: 'addresses GitHub review comments on the PR'
+  },
   { key: 'prReview', title: 'PR Review', blurb: 'reviews teammates’ PRs' },
   {
     key: 'errorInvestigation',

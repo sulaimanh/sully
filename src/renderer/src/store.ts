@@ -116,8 +116,15 @@ interface AppState {
   sidebarCollapsed: boolean
   /** the keyboard-shortcuts modal is showing */
   shortcutsOpen: boolean
+  /** issue whose ticket-details panel is open — lives here (not in BoardView)
+      so the panel survives switching views and comes back on return */
+  detailsIssueId: string | null
+  /** the details panel's agent-terminal pane is showing */
+  detailsTermOpen: boolean
 
   setView: (v: View) => void
+  setDetailsIssue: (issueId: string | null) => void
+  setDetailsTermOpen: (open: boolean) => void
   toggleSidebar: () => void
   setShortcutsOpen: (open: boolean) => void
   setActiveTerm: (id: string) => void
@@ -167,8 +174,20 @@ export const useApp = create<AppState>((set, get) => ({
   confirmQuitOpen: false,
   sidebarCollapsed: localStorage.getItem(SIDEBAR_COLLAPSED_KEY) === '1',
   shortcutsOpen: false,
+  detailsIssueId: null,
+  detailsTermOpen: false,
 
   setView: (view) => set({ view }),
+
+  // opening a different ticket starts with the terminal pane hidden, matching
+  // the keyed remount that resets the dialog's other panes
+  setDetailsIssue: (detailsIssueId) =>
+    set((st) => ({
+      detailsIssueId,
+      detailsTermOpen: detailsIssueId === st.detailsIssueId ? st.detailsTermOpen : false
+    })),
+
+  setDetailsTermOpen: (detailsTermOpen) => set({ detailsTermOpen }),
 
   toggleSidebar: () =>
     set((st) => {
