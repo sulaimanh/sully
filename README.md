@@ -13,6 +13,7 @@
 - [Features](#features)
 - [Integrations](#integrations)
 - [Getting Started](#getting-started)
+- [License](#license)
 
 ## What is Sully?
 
@@ -87,3 +88,7 @@ npm run build:mac
 5. Move a ticket into a mapped column and watch Sully take it from plan to PR.
 
 Run the built-in doctor from the app if anything looks off; it checks your CLIs, tokens, and MCP servers.
+
+## License
+
+Sully is open source under the [MIT License](LICENSE).

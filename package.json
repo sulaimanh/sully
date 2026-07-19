@@ -2,6 +2,7 @@
   "name": "sully",
   "version": "1.0.0",
   "description": "Sully — Linear-driven AI dev workflow orchestrator for macOS",
+  "license": "MIT",
   "main": "./out/main/index.js",
   "author": "example.com",
   "homepage": "https://electron-vite.org",
