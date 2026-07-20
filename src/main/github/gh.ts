@@ -170,6 +170,8 @@ export interface PrChecksResult {
   failed: PrCheckFailure[]
   /** empty string when the repo requires no reviews */
   reviewDecision: 'APPROVED' | 'CHANGES_REQUESTED' | 'REVIEW_REQUIRED' | ''
+  /** GitHub mergeability; 'BEHIND' means the head must be synced with base before merge */
+  mergeStateStatus: string
 }
 
 interface RollupNode {
@@ -193,7 +195,13 @@ interface RollupNode {
 export async function prChecks(repoPath: string, branch: string): Promise<PrChecksResult | null> {
   try {
     const out = await gh(
-      ['pr', 'view', branch, '--json', 'state,headRefOid,statusCheckRollup,reviewDecision'],
+      [
+        'pr',
+        'view',
+        branch,
+        '--json',
+        'state,headRefOid,statusCheckRollup,reviewDecision,mergeStateStatus'
+      ],
       repoPath
     )
     const pr = JSON.parse(out)
@@ -226,7 +234,8 @@ export async function prChecks(repoPath: string, branch: string): Promise<PrChec
       headSha: pr.headRefOid,
       overall,
       failed,
-      reviewDecision: pr.reviewDecision ?? ''
+      reviewDecision: pr.reviewDecision ?? '',
+      mergeStateStatus: pr.mergeStateStatus ?? ''
     }
   } catch {
     return null
@@ -368,6 +377,15 @@ export async function createPr(
   const url = out.trim().split('\n').pop() ?? ''
   if (!url.startsWith('http')) throw new Error(`gh pr create returned no URL: ${out}`)
   return url
+}
+
+export async function mergePr(repoPath: string, branch: string): Promise<void> {
+  await gh(['pr', 'merge', branch, '--squash', '--delete-branch'], repoPath)
+}
+
+/** Sync the PR's head branch with its base (GitHub "Update branch"). */
+export async function updatePrBranch(repoPath: string, branch: string): Promise<void> {
+  await gh(['pr', 'update-branch', branch], repoPath)
 }
 
 /** Map owner/repo -> local path for configured repos (parsed from git origin). */

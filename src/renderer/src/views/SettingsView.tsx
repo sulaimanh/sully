@@ -997,6 +997,24 @@ function TunablesSection(): ReactElement {
             />
           </div>
         </div>
+        <div
+          className="flex flex-col gap-1"
+          title="When a ticket's PR is approved and CI is green, squash-merge it automatically and delete the branch"
+        >
+          <span className="text-[11px] font-bold text-ink-300">Auto-merge approved PRs</span>
+          <div className="flex h-[30px] items-center">
+            <Toggle
+              checked={settings.orchestrator.autoMergeOnApproval}
+              onChange={(v) =>
+                save({
+                  ...settings,
+                  orchestrator: { ...settings.orchestrator, autoMergeOnApproval: v }
+                })
+              }
+              label="Auto-merge approved PRs"
+            />
+          </div>
+        </div>
         <Field label="Max CI fix attempts">
           <input
             type="number"

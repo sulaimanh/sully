@@ -37,7 +37,15 @@ import {
   moveIssue,
   type LinearIssueNode
 } from '../linear/operations'
-import { createPr, failedRunLogs, prChecks, prForBranch, prReviewComments } from '../github/gh'
+import {
+  createPr,
+  failedRunLogs,
+  mergePr,
+  prChecks,
+  prForBranch,
+  prReviewComments,
+  updatePrBranch
+} from '../github/gh'
 
 const PLAN_MARKER = (issueId: string): string => `<!-- sully:plan issueId=${issueId} v=1 -->`
 // plan comments posted before the conductor→sully rename must stay recognized
@@ -1016,6 +1024,42 @@ export class Orchestrator extends EventEmitter {
       }
       issue.prReview = review ?? 'none'
       this.save(issue)
+    }
+
+    // auto-merge on approval — independent of the CI-fix path below. Merge
+    // only when approved AND CI is green (or has no checks); once merged the
+    // next poll sees state !== OPEN and clears status above.
+    if (
+      act &&
+      settings.orchestrator.autoMergeOnApproval &&
+      review === 'approved' &&
+      (checks.overall === 'pass' || checks.overall === 'none')
+    ) {
+      try {
+        if (checks.mergeStateStatus === 'BEHIND') {
+          // repo requires the branch to be up to date — sync with base first.
+          // The resulting commit re-runs CI, so a later green poll does the merge.
+          await updatePrBranch(issue.repoPath, issue.branchName)
+          this.emit('notify', {
+            title: `${issue.identifier} branch updated`,
+            body: 'Synced with base before auto-merge; will merge once CI passes again.',
+            view: 'board'
+          })
+        } else {
+          await mergePr(issue.repoPath, issue.branchName)
+          this.emit('notify', {
+            title: `${issue.identifier} auto-merged`,
+            body: 'PR merged after approval.',
+            view: 'board'
+          })
+        }
+      } catch (err) {
+        this.emit('notify', {
+          title: `${issue.identifier} auto-merge failed`,
+          body: (err as Error).message.slice(0, 200),
+          view: 'board'
+        })
+      }
     }
 
     // everything below acts on a red streak — that requires automation on

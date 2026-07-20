@@ -325,6 +325,8 @@ export interface AppSettings {
     ciAutoFix: boolean
     /** Give up after this many auto-fix attempts per red streak */
     ciMaxFixAttempts: number
+    /** Merge a ticket's PR automatically once it's approved and CI is green */
+    autoMergeOnApproval: boolean
   }
   prWatcher: {
     enabled: boolean
@@ -564,7 +566,8 @@ export function defaultSettings(): AppSettings {
       requiredLabel: 'sully',
       ticketBudgetUsd: 25,
       ciAutoFix: true,
-      ciMaxFixAttempts: 3
+      ciMaxFixAttempts: 3,
+      autoMergeOnApproval: false
     },
     prWatcher: {
       enabled: false,
