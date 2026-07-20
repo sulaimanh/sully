@@ -7,7 +7,7 @@ import {
   type DragEvent,
   type ReactElement
 } from 'react'
-import ReactMarkdown from 'react-markdown'
+import ReactMarkdown, { type Components } from 'react-markdown'
 import {
   CircleHelp,
   Copy,
@@ -765,7 +765,36 @@ function GhReviewDialog({
   )
 }
 
-function CommentBlock({ comment }: { comment: IssueComment }): ReactElement {
+/**
+ * Markdown link renderer that opens http(s) links in the in-dialog browser
+ * pane (same as the PR / Linear buttons) instead of navigating the app frame.
+ */
+function paneLinkComponents(open: (url: string) => void): Components {
+  return {
+    a: ({ href, children, ...props }) => (
+      <a
+        href={href}
+        onClick={(e) => {
+          if (href && /^https?:\/\//i.test(href)) {
+            e.preventDefault()
+            open(href)
+          }
+        }}
+        {...props}
+      >
+        {children}
+      </a>
+    )
+  }
+}
+
+function CommentBlock({
+  comment,
+  onOpenLink
+}: {
+  comment: IssueComment
+  onOpenLink: (url: string) => void
+}): ReactElement {
   const name = comment.authorName ?? 'Unknown'
   return (
     <div>
@@ -777,14 +806,20 @@ function CommentBlock({ comment }: { comment: IssueComment }): ReactElement {
         <span className="text-[11px] text-ink-400">{timeAgo(comment.createdAt)}</span>
       </div>
       <div className="prose-plan mt-1.5 pl-[26px]">
-        <ReactMarkdown>{comment.body}</ReactMarkdown>
+        <ReactMarkdown components={paneLinkComponents(onOpenLink)}>{comment.body}</ReactMarkdown>
       </div>
     </div>
   )
 }
 
 /** Linear comments at the bottom of ticket details, threaded the way Linear shows them. */
-function TicketComments({ issueId }: { issueId: string }): ReactElement {
+function TicketComments({
+  issueId,
+  onOpenLink
+}: {
+  issueId: string
+  onOpenLink: (url: string) => void
+}): ReactElement {
   const [comments, setComments] = useState<IssueComment[] | null>(null)
   const [failed, setFailed] = useState(false)
   /** thread root the composer replies under — null posts a top-level comment */
@@ -851,11 +886,11 @@ function TicketComments({ issueId }: { issueId: string }): ReactElement {
         <div className="mt-4 flex flex-col gap-5">
           {threads.map(({ comment, replies }) => (
             <div key={comment.id}>
-              <CommentBlock comment={comment} />
+              <CommentBlock comment={comment} onOpenLink={onOpenLink} />
               {replies.length > 0 && (
                 <div className="hairline ml-2 mt-3 flex flex-col gap-4 border-l pl-4">
                   {replies.map((r) => (
-                    <CommentBlock key={r.id} comment={r} />
+                    <CommentBlock key={r.id} comment={r} onOpenLink={onOpenLink} />
                   ))}
                 </div>
               )}
@@ -1012,13 +1047,19 @@ function TicketDetailsDialog({
           <div className="selectable min-h-0 flex-1 overflow-y-auto px-6 py-4 text-[13px]">
             <div className="prose-plan">
               {description ? (
-                <ReactMarkdown>{description}</ReactMarkdown>
+                <ReactMarkdown components={paneLinkComponents(setBrowserUrl)}>
+                  {description}
+                </ReactMarkdown>
               ) : (
                 <p className="italic">No description.</p>
               )}
             </div>
             {/* keyed so switching tickets in a docked panel resets the list and composer */}
-            <TicketComments key={issue.issueId} issueId={issue.issueId} />
+            <TicketComments
+              key={issue.issueId}
+              issueId={issue.issueId}
+              onOpenLink={setBrowserUrl}
+            />
           </div>
         </TerminalDock>
       </BrowserDock>
