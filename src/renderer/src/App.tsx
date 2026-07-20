@@ -25,6 +25,7 @@ import SettingsView from './views/SettingsView'
 import OnboardingView from './views/OnboardingView'
 import ToolHealthBanner from './components/ToolHealthBanner'
 import UsageBar from './components/UsageBar'
+import SessionsMenu from './components/SessionsMenu'
 import Toasts from './components/Toasts'
 import BrowserPanel from './components/BrowserPanel'
 import QuitConfirm from './components/QuitConfirm'
@@ -104,6 +105,7 @@ export default function App(): ReactElement {
       {/* full-width titlebar: the traffic lights (18,18) live in this strip,
           fully above the sidebar and content */}
       <div className="titlebar-drag hairline flex h-[52px] shrink-0 items-center justify-end gap-3 border-b px-7">
+        <SessionsMenu />
         <UsageBar />
         <button
           onClick={() => {

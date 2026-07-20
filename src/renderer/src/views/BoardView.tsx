@@ -914,9 +914,21 @@ function TicketComments({ issueId }: { issueId: string }): ReactElement {
  */
 function TicketDetailsDialog({
   issue,
+  session,
+  devServer,
+  devCommand,
+  onViewPlan,
+  onViewLog,
+  onReprompt,
   onClose
 }: {
   issue: TrackedIssue
+  session?: Session
+  devServer?: DevServer
+  devCommand?: string
+  onViewPlan: () => void
+  onViewLog: () => void
+  onReprompt: () => void
   onClose: () => void
 }): ReactElement {
   const repoName = issue.repoPath?.split('/').pop()
@@ -927,6 +939,16 @@ function TicketDetailsDialog({
   const { detailsTermOpen: termOpen, setDetailsTermOpen: setTermOpen } = useApp()
   /** PR or Linear page shown in the in-dialog browser pane */
   const [browserUrl, setBrowserUrl] = useState<string | null>(null)
+  const [menuOpen, setMenuOpen] = useState(false)
+  const actions = cardActions({
+    issue,
+    session,
+    devServer,
+    devCommand,
+    onViewPlan,
+    onViewLog,
+    onReprompt
+  })
 
   return (
     <DockablePanel
@@ -946,6 +968,9 @@ function TicketDetailsDialog({
           </h3>
         </div>
         <div className="flex items-center gap-3">
+          {actions.length > 0 && (
+            <CardMenu actions={actions} open={menuOpen} setOpen={setMenuOpen} />
+          )}
           <DockControls />
           <button onClick={onClose} className="text-ink-300 hover:text-ink-50">
             <X size={17} />
@@ -1017,6 +1042,65 @@ interface CardAction {
   icon: ReactElement
   label: string
   onClick: () => void
+}
+
+/** The 3-dot menu's actions — shared by the issue card and the ticket details dialog. */
+function cardActions({
+  issue,
+  session,
+  devServer,
+  devCommand,
+  onViewPlan,
+  onViewLog,
+  onReprompt
+}: {
+  issue: TrackedIssue
+  session?: Session
+  devServer?: DevServer
+  devCommand?: string
+  onViewPlan: () => void
+  onViewLog: () => void
+  onReprompt: () => void
+}): CardAction[] {
+  const devRunning = devServer?.status === 'running'
+  const actions: CardAction[] = []
+  if (session)
+    actions.push({ icon: <ScrollText size={13} />, label: 'View session log', onClick: onViewLog })
+  if (issue.planBody)
+    actions.push({ icon: <FileText size={13} />, label: 'View plan', onClick: onViewPlan })
+  if (issue.prUrl)
+    actions.push({
+      icon: <GitPullRequest size={13} />,
+      label: 'Open pull request',
+      onClick: () => useApp.getState().openBrowser(issue.prUrl!)
+    })
+  if (issue.repoPath)
+    actions.push({
+      icon: <SquareTerminal size={13} />,
+      label: 'Open terminal',
+      onClick: () => void call(useApp.getState().openIssueTerminal(issue.issueId))
+    })
+  if (devCommand && issue.repoPath)
+    actions.push(
+      devRunning
+        ? {
+            icon: <Square size={13} />,
+            label: 'Stop dev environment',
+            onClick: () => void call(window.sully.stopDevServer(issue.issueId))
+          }
+        : {
+            icon: <Play size={13} />,
+            label: 'Run dev environment',
+            onClick: () => void call(window.sully.startDevServer(issue.issueId))
+          }
+    )
+  if (issue.phase === 'in_review' && !issue.activeSessionId && issue.repoPath)
+    actions.push({
+      icon: <MessageSquarePlus size={13} />,
+      label: 'Chat with the agent',
+      onClick: onReprompt
+    })
+  return actions
 }
 
 function CardMenu({
@@ -1103,43 +1187,15 @@ function IssueCard({
     setTimeout(() => setCopied(false), 1500)
   }
 
-  const actions: CardAction[] = []
-  if (running || session)
-    actions.push({ icon: <ScrollText size={13} />, label: 'View session log', onClick: onViewLog })
-  if (issue.planBody)
-    actions.push({ icon: <FileText size={13} />, label: 'View plan', onClick: onViewPlan })
-  if (issue.prUrl)
-    actions.push({
-      icon: <GitPullRequest size={13} />,
-      label: 'Open pull request',
-      onClick: () => useApp.getState().openBrowser(issue.prUrl!)
-    })
-  if (issue.repoPath)
-    actions.push({
-      icon: <SquareTerminal size={13} />,
-      label: 'Open terminal',
-      onClick: () => void call(useApp.getState().openIssueTerminal(issue.issueId))
-    })
-  if (devCommand && issue.repoPath)
-    actions.push(
-      devRunning
-        ? {
-            icon: <Square size={13} />,
-            label: 'Stop dev environment',
-            onClick: () => void call(window.sully.stopDevServer(issue.issueId))
-          }
-        : {
-            icon: <Play size={13} />,
-            label: 'Run dev environment',
-            onClick: () => void call(window.sully.startDevServer(issue.issueId))
-          }
-    )
-  if (issue.phase === 'in_review' && !issue.activeSessionId && issue.repoPath)
-    actions.push({
-      icon: <MessageSquarePlus size={13} />,
-      label: 'Chat with the agent',
-      onClick: onReprompt
-    })
+  const actions = cardActions({
+    issue,
+    session,
+    devServer,
+    devCommand,
+    onViewPlan,
+    onViewLog,
+    onReprompt
+  })
 
   return (
     <div
@@ -1751,6 +1807,15 @@ export default function BoardView(): ReactElement {
           // keyed so opening a different ticket resets the browser/terminal panes
           key={detailsFor.issueId}
           issue={detailsFor}
+          session={sessionFor(detailsFor)}
+          devServer={devServers[detailsFor.issueId]}
+          devCommand={devCommandFor(detailsFor)}
+          onViewPlan={() => setPlanFor(detailsFor)}
+          onViewLog={() => {
+            const s = sessionFor(detailsFor)
+            if (s) setLogFor(s)
+          }}
+          onReprompt={() => setRepromptFor(detailsFor)}
           onClose={() => setDetailsIssue(null)}
         />
       )}
