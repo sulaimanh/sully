@@ -66,11 +66,15 @@ export default function App(): ReactElement {
     sidebarCollapsed,
     toggleSidebar,
     shortcutsOpen,
-    setShortcutsOpen
+    setShortcutsOpen,
+    fullscreen,
+    setFullscreen
   } = useApp()
 
   const [sidebarHovered, setSidebarHovered] = useState(false)
-  const sidebarExpanded = !sidebarCollapsed || sidebarHovered
+  const inFullscreen = fullscreen !== null
+  // full screen keeps the sidebar pinned to its icon rail, hover and all
+  const sidebarExpanded = (!sidebarCollapsed || sidebarHovered) && !inFullscreen
 
   useEffect(() => {
     void init()
@@ -79,6 +83,21 @@ export default function App(): ReactElement {
   useEffect(() => {
     document.documentElement.classList.toggle('light', settings?.theme === 'light')
   }, [settings?.theme])
+
+  // Escape leaves full screen, unless the user is typing (e.g. the browser url
+  // bar uses Escape to blur)
+  useEffect(() => {
+    if (!inFullscreen) return undefined
+    const onKey = (e: KeyboardEvent): void => {
+      const el = document.activeElement
+      const editing =
+        el instanceof HTMLElement &&
+        (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable)
+      if (e.key === 'Escape' && !editing) setFullscreen(null)
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [inFullscreen, setFullscreen])
 
   if (!loaded || !settings) {
     return (
@@ -293,7 +312,12 @@ export default function App(): ReactElement {
         {/* main pane */}
         <main className="flex min-w-0 flex-1 flex-col">
           <ToolHealthBanner />
-          <div className="min-h-0 flex-1 overflow-y-auto px-7 pb-8 pt-6">
+          <div
+            className={cn(
+              'min-h-0 flex-1 overflow-y-auto',
+              fullscreen === 'terminal' ? 'p-2' : 'px-7 pb-8 pt-6'
+            )}
+          >
             {view === 'board' && <BoardView />}
             {view === 'sessions' && <SessionsView />}
             {view === 'reviews' && <ReviewsView />}

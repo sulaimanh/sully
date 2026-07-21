@@ -55,6 +55,16 @@ export class DevServerManager extends EventEmitter {
       const text = chunk.toString('utf8')
       logStream.write(text)
       info.lastOutput = ((info.lastOutput ?? '') + text).slice(-500)
+      if (!info.url) {
+        // dev tools print their address with ANSI color codes (vite, next, etc.)
+        // eslint-disable-next-line no-control-regex
+        const plain = text.replace(/\x1b\[[0-9;]*m/g, '')
+        const match = plain.match(/https?:\/\/(?:localhost|127\.0\.0\.1|0\.0\.0\.0)(?::\d+)?\/?/i)
+        if (match) {
+          info.url = match[0].replace('0.0.0.0', 'localhost')
+          this.broadcast()
+        }
+      }
     }
     child.stdout?.on('data', capture)
     child.stderr?.on('data', capture)

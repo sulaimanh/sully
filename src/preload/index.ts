@@ -107,6 +107,7 @@ const api = {
     ipcRenderer.invoke(IPC.reviewsSetEnabled, enabled),
   stopReview: (key: string): Promise<void> => ipcRenderer.invoke(IPC.reviewStop, key),
   retriggerReview: (key: string): Promise<void> => ipcRenderer.invoke(IPC.reviewRetrigger, key),
+  removeReview: (key: string): Promise<void> => ipcRenderer.invoke(IPC.reviewRemove, key),
   listErrors: (source: ErrorSource, days: number): Promise<ErrorTrackingIssue[]> =>
     ipcRenderer.invoke(IPC.errorsList, source, days),
   investigateError: (source: ErrorSource, error: ErrorTrackingIssue): Promise<Session> =>

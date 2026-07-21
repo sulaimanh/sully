@@ -12,6 +12,9 @@ export const REVIEWS_FILE = path.join(CONFIG_DIR, 'pr-reviews.json')
 // url -> head SHA of the last launched review; outlives REVIEWS_FILE row
 // retention so an unchanged PR is never re-reviewed at full cost
 export const REVIEW_ATTEMPTS_FILE = path.join(CONFIG_DIR, 'pr-review-attempts.json')
+// PR urls the user explicitly removed; never auto-reviewed again, regardless
+// of head SHA or row retention
+export const REVIEW_DISMISSED_FILE = path.join(CONFIG_DIR, 'pr-review-dismissed.json')
 export const CREDENTIALS_FILE = path.join(CONFIG_DIR, 'credentials.json')
 export const SESSIONS_DIR = path.join(CONFIG_DIR, 'sessions')
 export const LOGS_DIR = path.join(CONFIG_DIR, 'logs')

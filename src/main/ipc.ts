@@ -281,6 +281,7 @@ export function registerIpc(): void {
   )
   ipcMain.handle(IPC.reviewStop, (_e, key: string) => prReviewWatcher.stopReview(key))
   ipcMain.handle(IPC.reviewRetrigger, (_e, key: string) => prReviewWatcher.retrigger(key))
+  ipcMain.handle(IPC.reviewRemove, (_e, key: string) => prReviewWatcher.remove(key))
 
   ipcMain.handle(IPC.errorsList, (_e, source: ErrorSource, days: number) => {
     if (source !== 'frontend' && source !== 'backend') throw new Error(`invalid source: ${source}`)

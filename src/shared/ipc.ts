@@ -47,6 +47,7 @@ export const IPC = {
   reviewsSetEnabled: 'reviews:set-enabled',
   reviewStop: 'review:stop',
   reviewRetrigger: 'review:retrigger',
+  reviewRemove: 'review:remove',
   errorsList: 'errors:list',
   errorsInvestigate: 'errors:investigate',
   pickFolder: 'dialog:pick-folder',

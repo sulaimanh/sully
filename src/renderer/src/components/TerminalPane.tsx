@@ -83,6 +83,7 @@ export default function TerminalPane({
   const hostRef = useRef<HTMLDivElement>(null)
   const termRef = useRef<Terminal | null>(null)
   const fitRef = useRef<FitAddon | null>(null)
+  const webglRef = useRef<WebglAddon | null>(null)
   const theme = useApp((s) => s.settings?.theme ?? 'dark')
   // real keyboard focus (xterm's hidden textarea), not the split-layout's
   // focused pane — drives the dimming shade over inactive terminals
@@ -117,14 +118,6 @@ export default function TerminalPane({
     const fit = new FitAddon()
     term.loadAddon(fit)
     term.open(host)
-    try {
-      const webgl = new WebglAddon()
-      // GPU/display switches can kill the context; dispose to fall back to the DOM renderer
-      webgl.onContextLoss(() => webgl.dispose())
-      term.loadAddon(webgl)
-    } catch {
-      // WebGL unavailable — xterm falls back to the DOM renderer
-    }
     termRef.current = term
     fitRef.current = fit
 
@@ -162,16 +155,56 @@ export default function TerminalPane({
     host.addEventListener('dragover', onDragOver)
     host.addEventListener('drop', onDrop)
 
+    // macOS can wipe the WebGL glyph atlas while the app is backgrounded
+    // without firing a context-loss event, leaving mostly-blank text on
+    // return — rebuild the atlas whenever the window regains focus
+    const onWindowFocus = (): void => {
+      term.clearTextureAtlas()
+      term.refresh(0, term.rows - 1)
+    }
+    window.addEventListener('focus', onWindowFocus)
+
     return () => {
       offData()
+      window.removeEventListener('focus', onWindowFocus)
       host.removeEventListener('dragover', onDragOver)
       host.removeEventListener('drop', onDrop)
       ro.disconnect()
-      term.dispose()
+      term.dispose() // also disposes any loaded addons, incl. webgl
+      webglRef.current = null
       termRef.current = null
       fitRef.current = null
     }
   }, [id])
+
+  // WebGL only while on screen: Chromium caps a page at 16 live WebGL
+  // contexts and kills the oldest past that, so panes accumulating in the
+  // always-mounted Terminal view corrupt whichever terminal the user is
+  // looking at. Hidden panes ride the (idle) DOM renderer instead.
+  useEffect(() => {
+    const term = termRef.current
+    if (!term) return
+    if (visible && !webglRef.current) {
+      try {
+        const webgl = new WebglAddon()
+        // GPU/display switches can kill the context; fall back to the DOM renderer
+        webgl.onContextLoss(() => {
+          webgl.dispose()
+          if (webglRef.current === webgl) webglRef.current = null
+        })
+        term.loadAddon(webgl)
+        webglRef.current = webgl
+      } catch {
+        // WebGL unavailable — xterm falls back to the DOM renderer
+      }
+      // repair any atlas corruption that happened while hidden
+      term.clearTextureAtlas()
+      term.refresh(0, term.rows - 1)
+    } else if (!visible && webglRef.current) {
+      webglRef.current.dispose()
+      webglRef.current = null
+    }
+  }, [visible, id])
 
   useEffect(() => {
     const term = termRef.current

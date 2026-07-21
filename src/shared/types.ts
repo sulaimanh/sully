@@ -229,6 +229,8 @@ export interface DevServer {
   startedAt: string
   /** tail of recent output, for quick diagnostics when the command fails */
   lastOutput?: string
+  /** local URL detected from the dev command's output, e.g. "http://localhost:5173/" */
+  url?: string
   logFile: string
 }
 

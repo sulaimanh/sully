@@ -4,7 +4,13 @@ import { settingsStore } from '../settings'
 import { processManager } from '../process/ProcessManager'
 import { buildReviewCommand } from '../orchestrator/prompts'
 import { buildRepoMap, findReviewCandidates, prStatus } from '../github/gh'
-import { REVIEWS_FILE, REVIEW_ATTEMPTS_FILE, readJson, writeJsonAtomic } from '../paths'
+import {
+  REVIEWS_FILE,
+  REVIEW_ATTEMPTS_FILE,
+  REVIEW_DISMISSED_FILE,
+  readJson,
+  writeJsonAtomic
+} from '../paths'
 
 /**
  * TS port of dashboard-skills/dashboard/scripts/watch-pr-reviews.sh.
@@ -19,6 +25,8 @@ export class PRReviewWatcher extends EventEmitter {
     REVIEW_ATTEMPTS_FILE,
     {}
   )
+  /** PR urls the user explicitly removed — never auto-reviewed again */
+  private dismissed = new Set<string>(readJson<string[]>(REVIEW_DISMISSED_FILE, []))
   private timer?: NodeJS.Timeout
   private iterating = false
 
@@ -69,6 +77,22 @@ export class PRReviewWatcher extends EventEmitter {
     row.startedAt = new Date().toISOString()
     row.startedEpoch = Math.floor(Date.now() / 1000)
     row.finishedEpoch = undefined
+    this.persist()
+  }
+
+  /**
+   * Remove a review row and never auto-review that PR again (explicit user
+   * action). Stops the session first if it's still running. The url is
+   * persisted to a dismiss list so it survives row-retention pruning and
+   * suppresses re-review regardless of the PR's head SHA.
+   */
+  async remove(key: string): Promise<void> {
+    const row = this.reviews.find((r) => r.key === key)
+    if (!row) return
+    if (row.status === 'reviewing' && row.sessionId) await processManager.stop(row.sessionId)
+    this.dismissed.add(row.url)
+    writeJsonAtomic(REVIEW_DISMISSED_FILE, [...this.dismissed])
+    this.reviews = this.reviews.filter((r) => r.key !== key)
     this.persist()
   }
 
@@ -185,6 +209,7 @@ export class PRReviewWatcher extends EventEmitter {
       const repoPath = repoMap.get(pr.nameWithOwner)
       if (!repoPath) continue
       if (this.reviews.some((r) => r.url === pr.url)) continue // reviewing or recently finished
+      if (this.dismissed.has(pr.url)) continue // user removed this review — never re-run
 
       const [owner, repo] = pr.nameWithOwner.split('/')
       const status = await prStatus(owner, repo, pr.number)

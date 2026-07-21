@@ -332,7 +332,7 @@ function PlanDialog({
       minHeight={420}
       onClose={onClose}
     >
-      <header className="hairline flex items-center justify-between border-b px-6 py-4">
+      <header className="hairline flex flex-col gap-3 border-b px-6 py-4">
         <div>
           <p className="font-mono text-[11px] uppercase tracking-[0.18em] text-brass-400">
             implementation plan
@@ -346,7 +346,7 @@ function PlanDialog({
             </p>
           )}
         </div>
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-3 self-end">
           {issue.repoPath && issue.phase !== 'planning' && (
             <Button
               onClick={() => setTermOpen(!termOpen)}
@@ -471,7 +471,7 @@ function PlanQuestionsDialog({
       minHeight={380}
       onClose={onClose}
     >
-      <header className="hairline flex items-center justify-between border-b px-6 py-4">
+      <header className="hairline flex flex-col gap-3 border-b px-6 py-4">
         <div>
           <p className="font-mono text-[11px] uppercase tracking-[0.18em] text-brass-400">
             agent questions
@@ -483,7 +483,7 @@ function PlanQuestionsDialog({
             the agent paused planning to ask instead of guessing — your answers shape the plan
           </p>
         </div>
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-3 self-end">
           <DockControls />
           <button onClick={onClose} className="text-ink-300 hover:text-ink-50">
             <X size={17} />
@@ -569,7 +569,7 @@ function RepromptDialog({
       minHeight={380}
       onClose={onClose}
     >
-      <header className="hairline flex items-center justify-between border-b px-6 py-4">
+      <header className="hairline flex flex-col gap-3 border-b px-6 py-4">
         <div>
           <p className="font-mono text-[11px] uppercase tracking-[0.18em] text-brass-400">
             chat with the agent
@@ -578,7 +578,7 @@ function RepromptDialog({
             {issue.identifier} — {issue.title}
           </h3>
         </div>
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-3 self-end">
           <DockControls />
           <button onClick={onClose} className="text-ink-300 hover:text-ink-50">
             <X size={17} />
@@ -647,7 +647,7 @@ function GhReviewDialog({
       minHeight={420}
       onClose={onClose}
     >
-      <header className="hairline flex items-center justify-between border-b px-6 py-4">
+      <header className="hairline flex flex-col gap-3 border-b px-6 py-4">
         <div>
           <p className="font-mono text-[11px] uppercase tracking-[0.18em] text-brass-400">
             github review
@@ -656,7 +656,7 @@ function GhReviewDialog({
             {issue.identifier} — {issue.title}
           </h3>
         </div>
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-3 self-end">
           <DockControls />
           <button onClick={onClose} className="text-ink-300 hover:text-ink-50">
             <X size={17} />
@@ -993,7 +993,7 @@ function TicketDetailsDialog({
       minHeight={380}
       onClose={onClose}
     >
-      <header className="hairline flex items-center justify-between border-b px-6 py-4">
+      <header className="hairline flex flex-col gap-3 border-b px-6 py-4">
         <div>
           <p className="font-mono text-[11px] uppercase tracking-[0.18em] text-brass-400">
             ticket details
@@ -1002,7 +1002,7 @@ function TicketDetailsDialog({
             {issue.identifier} — {issue.title}
           </h3>
         </div>
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-3 self-end">
           {actions.length > 0 && (
             <CardMenu actions={actions} open={menuOpen} setOpen={setMenuOpen} />
           )}
@@ -1392,8 +1392,18 @@ function IssueCard({
 
       {devRunning && (
         <p className="mt-2 flex items-center gap-1.5 text-[10.5px] text-sage-400">
-          <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-sage-400" /> dev environment
-          running
+          <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-sage-400" />
+          {devServer?.url ? (
+            <button
+              onClick={() => void window.sully.openExternal(devServer.url!)}
+              className="underline underline-offset-2 hover:text-sage-300"
+              title="Open in browser"
+            >
+              {devServer.url}
+            </button>
+          ) : (
+            'dev environment running'
+          )}
         </p>
       )}
 
@@ -1426,6 +1436,35 @@ function IssueCard({
               title="Retry the failed step"
             >
               <RotateCcw size={11} /> Retry
+            </Button>
+          )}
+          {devCommand && issue.repoPath && (
+            <Button
+              className="px-1.5"
+              onClick={() =>
+                void call(
+                  devRunning
+                    ? window.sully.stopDevServer(issue.issueId)
+                    : window.sully.startDevServer(issue.issueId)
+                )
+              }
+              title={devRunning ? 'Stop dev environment' : 'Run dev environment'}
+            >
+              {devRunning ? <Square size={13} /> : <Play size={13} />}
+            </Button>
+          )}
+          {issue.prUrl && (
+            <Button
+              className="px-1.5"
+              onClick={() => useApp.getState().openBrowser(issue.prUrl!)}
+              title="Open pull request"
+            >
+              <GitPullRequest size={13} />
+            </Button>
+          )}
+          {issue.phase === 'in_review' && !issue.activeSessionId && issue.repoPath && (
+            <Button className="px-1.5" onClick={onReprompt} title="Chat with the agent">
+              <MessageSquarePlus size={13} />
             </Button>
           )}
           {actions.length > 0 && (
@@ -1515,7 +1554,7 @@ function DeployDialog({ onClose }: { onClose: () => void }): ReactElement {
       minHeight={280}
       onClose={onClose}
     >
-      <header className="hairline flex items-center justify-between border-b px-6 py-4">
+      <header className="hairline flex flex-col gap-3 border-b px-6 py-4">
         <div>
           <p className="font-mono text-[11px] uppercase tracking-[0.18em] text-brass-400">
             deploy a release
@@ -1524,7 +1563,7 @@ function DeployDialog({ onClose }: { onClose: () => void }): ReactElement {
             {repo ? repo.label : 'no repo selected'}
           </h3>
         </div>
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-3 self-end">
           <DockControls />
           <button onClick={onClose} className="text-ink-300 hover:text-ink-50">
             <X size={17} />

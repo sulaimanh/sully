@@ -1,14 +1,16 @@
 import {
   createContext,
   useContext,
+  useEffect,
   useRef,
   useState,
   type ReactElement,
   type ReactNode
 } from 'react'
 import { createPortal } from 'react-dom'
-import { AppWindow, PanelBottom, PanelRight } from 'lucide-react'
+import { AppWindow, Maximize2, Minimize2, PanelBottom, PanelRight } from 'lucide-react'
 import { cn } from '../lib/utils'
+import { useApp } from '../store'
 
 export type DockMode = 'modal' | 'sidebar' | 'bottom'
 
@@ -52,7 +54,12 @@ function loadLayout(id: string): PanelLayout {
 
 const clamp = (v: number, lo: number, hi: number): number => Math.min(hi, Math.max(lo, v))
 
-const DockContext = createContext<{ mode: DockMode; setMode: (m: DockMode) => void } | null>(null)
+const DockContext = createContext<{
+  mode: DockMode
+  setMode: (m: DockMode) => void
+  fullscreen: boolean
+  toggleFullscreen: () => void
+} | null>(null)
 
 const MODES = [
   { mode: 'modal', icon: AppWindow, label: 'Modal' },
@@ -65,22 +72,40 @@ export function DockControls(): ReactElement | null {
   const ctx = useContext(DockContext)
   if (!ctx) return null
   return (
-    <div className="hairline flex shrink-0 overflow-hidden rounded-lg border">
-      {MODES.map(({ mode, icon: Icon, label }) => (
-        <button
-          key={mode}
-          onClick={() => ctx.setMode(mode)}
-          title={label}
-          className={cn(
-            'px-2 py-1.5 transition-colors duration-150',
-            ctx.mode === mode
-              ? 'bg-ink-700 text-ink-50'
-              : 'text-ink-400 hover:bg-ink-800 hover:text-ink-100'
-          )}
-        >
-          <Icon size={13} strokeWidth={1.8} />
-        </button>
-      ))}
+    <div className="flex shrink-0 items-center gap-2">
+      <div className="hairline flex overflow-hidden rounded-lg border">
+        {MODES.map(({ mode, icon: Icon, label }) => (
+          <button
+            key={mode}
+            onClick={() => ctx.setMode(mode)}
+            title={label}
+            className={cn(
+              'px-2 py-1.5 transition-colors duration-150',
+              !ctx.fullscreen && ctx.mode === mode
+                ? 'bg-ink-700 text-ink-50'
+                : 'text-ink-400 hover:bg-ink-800 hover:text-ink-100'
+            )}
+          >
+            <Icon size={13} strokeWidth={1.8} />
+          </button>
+        ))}
+      </div>
+      <button
+        onClick={ctx.toggleFullscreen}
+        title={ctx.fullscreen ? 'Exit full screen' : 'Full screen'}
+        className={cn(
+          'rounded-lg p-1.5 transition-colors duration-150',
+          ctx.fullscreen
+            ? 'bg-ink-700 text-ink-50'
+            : 'text-ink-400 hover:bg-ink-800 hover:text-ink-100'
+        )}
+      >
+        {ctx.fullscreen ? (
+          <Minimize2 size={13} strokeWidth={1.8} />
+        ) : (
+          <Maximize2 size={13} strokeWidth={1.8} />
+        )}
+      </button>
     </div>
   )
 }
@@ -161,6 +186,17 @@ export default function DockablePanel({
   const dragFrom = useRef<PanelLayout>(layout)
   const panelRef = useRef<HTMLDivElement>(null)
 
+  const isFullscreen = useApp((s) => s.fullscreen === id)
+  const setFullscreen = useApp((s) => s.setFullscreen)
+
+  // if this panel is closed while still maximized, clear the global fullscreen
+  // flag it owns — otherwise the sidebar stays pinned shut after it unmounts
+  useEffect(() => {
+    return () => {
+      if (useApp.getState().fullscreen === id) useApp.getState().setFullscreen(null)
+    }
+  }, [id])
+
   const update = (patch: Partial<PanelLayout>): void =>
     setLayout((prev) => {
       const next = { ...prev, ...patch }
@@ -172,8 +208,28 @@ export default function DockablePanel({
       return next
     })
 
-  const ctx = { mode: layout.mode, setMode: (mode: DockMode) => update({ mode }) }
+  const ctx = {
+    mode: layout.mode,
+    // picking a dock mode also restores from full screen into that mode
+    setMode: (mode: DockMode) => {
+      update({ mode })
+      if (isFullscreen) setFullscreen(null)
+    },
+    fullscreen: isFullscreen,
+    toggleFullscreen: () => setFullscreen(isFullscreen ? null : id)
+  }
   const body = <DockContext.Provider value={ctx}>{children}</DockContext.Provider>
+
+  // full screen wins over the dock mode: a borderless overlay filling the
+  // window below the 52px titlebar and right of the collapsed sidebar rail
+  if (isFullscreen) {
+    return createPortal(
+      <div className="fixed bottom-0 left-[72px] right-0 top-[52px] z-[60] flex flex-col overflow-hidden bg-ink-900">
+        {body}
+      </div>,
+      document.body
+    )
+  }
 
   if (layout.mode === 'sidebar') {
     return createPortal(

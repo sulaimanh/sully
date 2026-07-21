@@ -381,7 +381,7 @@ export default function NewTicketDialog({ onClose }: { onClose: () => void }): R
       minHeight={520}
       onClose={onClose}
     >
-      <header className="hairline flex items-center justify-between border-b px-6 py-4">
+      <header className="hairline flex flex-col gap-3 border-b px-6 py-4">
         <div>
           <p className="font-mono text-[11px] uppercase tracking-[0.18em] text-brass-400">
             new ticket
@@ -390,7 +390,7 @@ export default function NewTicketDialog({ onClose }: { onClose: () => void }): R
             {title.trim() || 'untitled'}
           </h3>
         </div>
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-3 self-end">
           <DockControls />
           <button onClick={onClose} className="text-ink-300 hover:text-ink-50">
             <X size={17} />

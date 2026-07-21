@@ -116,6 +116,8 @@ interface AppState {
   sidebarCollapsed: boolean
   /** the keyboard-shortcuts modal is showing */
   shortcutsOpen: boolean
+  /** id of the surface expanded to full screen (a DockablePanel id, or 'terminal'); null = none */
+  fullscreen: string | null
   /** issue whose ticket-details panel is open — lives here (not in BoardView)
       so the panel survives switching views and comes back on return */
   detailsIssueId: string | null
@@ -127,6 +129,10 @@ interface AppState {
   setDetailsTermOpen: (open: boolean) => void
   toggleSidebar: () => void
   setShortcutsOpen: (open: boolean) => void
+  /** expand a surface to full screen, or restore when passed null */
+  setFullscreen: (id: string | null) => void
+  /** full-screen id if it's not already, restore it if it is */
+  toggleFullscreen: (id: string) => void
   setActiveTerm: (id: string) => void
   /** register a freshly created (or refocused) terminal and switch to it */
   termOpened: (info: TerminalInfo) => void
@@ -174,10 +180,14 @@ export const useApp = create<AppState>((set, get) => ({
   confirmQuitOpen: false,
   sidebarCollapsed: localStorage.getItem(SIDEBAR_COLLAPSED_KEY) === '1',
   shortcutsOpen: false,
+  fullscreen: null,
   detailsIssueId: null,
   detailsTermOpen: false,
 
-  setView: (view) => set({ view }),
+  // terminal full screen is tied to the terminal view; leaving the view exits
+  // it so the user isn't stranded with the chrome hidden and no exit button
+  setView: (view) =>
+    set((st) => ({ view, fullscreen: st.fullscreen === 'terminal' ? null : st.fullscreen })),
 
   // opening a different ticket starts with the terminal pane hidden, matching
   // the keyed remount that resets the dialog's other panes
@@ -197,6 +207,10 @@ export const useApp = create<AppState>((set, get) => ({
     }),
 
   setShortcutsOpen: (shortcutsOpen) => set({ shortcutsOpen }),
+
+  setFullscreen: (fullscreen) => set({ fullscreen }),
+
+  toggleFullscreen: (id) => set((st) => ({ fullscreen: st.fullscreen === id ? null : id })),
 
   dismissConfirmQuit: () => set({ confirmQuitOpen: false }),
 
@@ -449,7 +463,7 @@ export const useApp = create<AppState>((set, get) => ({
     window.sully.onPlanUsage((planUsage) => set({ planUsage }))
     window.sully.onNavigate((view) => {
       if (['board', 'sessions', 'reviews', 'errors', 'terminal', 'settings'].includes(view)) {
-        set({ view: view as View })
+        get().setView(view as View)
         window.focus()
       }
     })

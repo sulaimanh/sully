@@ -1,5 +1,5 @@
 import { useState, type ReactElement } from 'react'
-import { ExternalLink, RotateCcw, ScrollText, Square } from 'lucide-react'
+import { ExternalLink, RotateCcw, ScrollText, Square, Trash2 } from 'lucide-react'
 import type { ActiveReview } from '@shared/types'
 import { call, useApp } from '../store'
 import { Button, EmptyState, Toggle, Vu } from '../lib/ui'
@@ -84,6 +84,12 @@ function ReviewRow({ review, onLog }: { review: ActiveReview; onLog: () => void 
             <RotateCcw size={12} />
           </Button>
         )}
+        <Button
+          onClick={() => void call(window.sully.removeReview(review.key), 'Review removed')}
+          title="Remove — won't be auto-reviewed again"
+        >
+          <Trash2 size={12} />
+        </Button>
       </div>
     </div>
   )

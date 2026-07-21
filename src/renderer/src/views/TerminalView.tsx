@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type ReactElement } from 'react'
-import { Plus, X } from 'lucide-react'
+import { Maximize2, Minimize2, Plus, X } from 'lucide-react'
 import { useApp } from '../store'
 import { EmptyState } from '../lib/ui'
 import { cn } from '../lib/utils'
@@ -16,6 +16,8 @@ export default function TerminalView(): ReactElement {
   const tabs = useApp((s) => s.termTabs)
   const activeId = useApp((s) => s.activeTermId)
   const setActiveTerm = useApp((s) => s.setActiveTerm)
+  const isFullscreen = useApp((s) => s.fullscreen === 'terminal')
+  const toggleFullscreen = useApp((s) => s.toggleFullscreen)
   const [showPicker, setShowPicker] = useState(false)
   const pickerRef = useRef<HTMLDivElement>(null)
 
@@ -107,6 +109,17 @@ export default function TerminalView(): ReactElement {
           ))}
         </div>
         {newButton}
+        <button
+          onClick={() => toggleFullscreen('terminal')}
+          title={isFullscreen ? 'Exit full screen' : 'Full screen'}
+          className="flex h-[26px] w-[26px] items-center justify-center rounded-md text-ink-300 transition-colors duration-150 hover:bg-ink-700 hover:text-ink-50"
+        >
+          {isFullscreen ? (
+            <Minimize2 size={14} strokeWidth={2} />
+          ) : (
+            <Maximize2 size={14} strokeWidth={2} />
+          )}
+        </button>
       </div>
 
       <div className="hairline min-h-0 flex-1 overflow-hidden rounded-xl border bg-term p-2">
