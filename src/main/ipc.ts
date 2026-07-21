@@ -54,6 +54,8 @@ async function resolveIssueWorktree(
     issue.worktreePath && fs.existsSync(issue.worktreePath)
       ? issue.worktreePath
       : await ensureWorktree(issue.repoPath, issue.branchName)
+  // record it so the board sees the worktree exists and later opens skip setup
+  orchestrator.noteWorktree(issueId, cwd)
   return { issue, cwd }
 }
 
@@ -163,6 +165,9 @@ export function registerIpc(): void {
   ipcMain.handle(IPC.issuePlanFeedback, (_e, issueId: string, message: string) =>
     orchestrator.planFeedback(issueId, message)
   )
+  ipcMain.handle(IPC.issueRewritePlan, (_e, issueId: string, instructions?: string) =>
+    orchestrator.rewritePlan(issueId, instructions)
+  )
   ipcMain.handle(
     IPC.issueAnswerPlanQuestions,
     (_e, issueId: string, answers: Array<{ id: string; answer: string }>) =>
@@ -197,12 +202,6 @@ export function registerIpc(): void {
 
   // embedded terminal: ptys live here so they survive renderer reloads
   ipcMain.handle(IPC.termCreate, (_e, cwd?: string) => ptyManager.create(cwd))
-  ipcMain.handle(IPC.termCreateForIssue, async (_e, issueId: string) => {
-    const existing = ptyManager.findByIssue(issueId, 'shell')
-    if (existing) return existing
-    const { issue, cwd } = await resolveIssueWorktree(issueId)
-    return ptyManager.create(cwd, { issueId, title: issue.identifier })
-  })
   // "chat with the agent": a real terminal running interactive claude in the
   // ticket's worktree, resuming the ticket's conversation when its transcript
   // is on this machine (same rule as headless resumes)

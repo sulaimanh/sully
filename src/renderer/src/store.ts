@@ -136,7 +136,6 @@ interface AppState {
   setActiveTerm: (id: string) => void
   /** register a freshly created (or refocused) terminal and switch to it */
   termOpened: (info: TerminalInfo) => void
-  openIssueTerminal: (issueId: string) => Promise<void>
   /** split a pane inside rootId's layout with a fresh pty; resolves to the new pane id */
   splitTerm: (rootId: string, paneId: string, direction: SplitDirection) => Promise<string | null>
   setSplitRatio: (rootId: string, splitId: string, ratio: number) => void
@@ -275,13 +274,6 @@ export const useApp = create<AppState>((set, get) => ({
       termTabs: st.termTabs.some((t) => t.id === info.id) ? st.termTabs : [...st.termTabs, info],
       activeTermId: info.id
     })),
-
-  openIssueTerminal: async (issueId) => {
-    // returns the existing terminal if the ticket already has one
-    const info = await window.sully.termCreateForIssue(issueId)
-    get().termOpened(info)
-    set({ view: 'terminal' })
-  },
 
   splitTerm: async (rootId, paneId, direction) => {
     const st = get()

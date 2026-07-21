@@ -67,6 +67,8 @@ const api = {
     ipcRenderer.invoke(IPC.issueUpdatePlan, issueId, planText),
   planFeedback: (issueId: string, message: string): Promise<void> =>
     ipcRenderer.invoke(IPC.issuePlanFeedback, issueId, message),
+  rewritePlan: (issueId: string, instructions?: string): Promise<void> =>
+    ipcRenderer.invoke(IPC.issueRewritePlan, issueId, instructions),
   answerPlanQuestions: (
     issueId: string,
     answers: Array<{ id: string; answer: string }>
@@ -88,8 +90,6 @@ const api = {
   readSessionEvents: (id: string): Promise<StreamEvent[]> =>
     ipcRenderer.invoke(IPC.sessionReadEvents, id),
   termCreate: (cwd?: string): Promise<TerminalInfo> => ipcRenderer.invoke(IPC.termCreate, cwd),
-  termCreateForIssue: (issueId: string): Promise<TerminalInfo> =>
-    ipcRenderer.invoke(IPC.termCreateForIssue, issueId),
   termCreateAgentForIssue: (issueId: string): Promise<TerminalInfo> =>
     ipcRenderer.invoke(IPC.termCreateAgentForIssue, issueId),
   termCreateTicketDraft: (repoPath?: string): Promise<TerminalInfo> =>

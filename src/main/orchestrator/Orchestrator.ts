@@ -203,6 +203,14 @@ export class Orchestrator extends EventEmitter {
     return this.store.all()
   }
 
+  /** Record a worktree created outside the planning flow (e.g. the agent terminal). */
+  noteWorktree(issueId: string, worktreePath: string): void {
+    const issue = this.store.get(issueId)
+    if (!issue || issue.worktreePath === worktreePath) return
+    issue.worktreePath = worktreePath
+    this.save(issue)
+  }
+
   pollNow(): void {
     this.scheduleNext(0)
   }
@@ -647,7 +655,8 @@ export class Orchestrator extends EventEmitter {
             settings.phases.planning,
             issue,
             issue.description,
-            issue.worktreePath
+            issue.worktreePath,
+            issue.rewriteInstructions
           )
       const session = processManager.start({
         kind: 'planning',
@@ -700,6 +709,8 @@ export class Orchestrator extends EventEmitter {
         issue.phase = 'plan_questions'
         // answers resume this conversation — the exploration is already paid for
         issue.chatSessionId = session.agentSessionId ?? issue.chatSessionId
+        // a rewrite's direction is already in this conversation's context
+        issue.rewriteInstructions = undefined
         issue.lastError = undefined
         this.save(issue)
         this.emit('notify', {
@@ -734,6 +745,7 @@ export class Orchestrator extends EventEmitter {
       // plan feedback resumes the planning conversation — it already holds the
       // explored codebase context
       issue.chatSessionId = session.agentSessionId ?? issue.chatSessionId
+      issue.rewriteInstructions = undefined // consumed; kept on failure so a retry re-applies it
       issue.lastError = undefined
       this.save(issue)
       this.emit('notify', {
@@ -820,6 +832,34 @@ export class Orchestrator extends EventEmitter {
     } finally {
       this.busy.delete(issueId)
     }
+  }
+
+  /**
+   * User rejected the plan and asked for a full rewrite — explicit action,
+   * works with automation off. Unlike planFeedback (incremental edits on the
+   * resumed conversation), this starts a FRESH planning session so the new
+   * plan doesn't anchor on the rejected one.
+   */
+  async rewritePlan(issueId: string, instructions?: string): Promise<void> {
+    const issue = this.store.get(issueId)
+    if (!issue || issue.phase !== 'plan_ready' || issue.activeSessionId || !issue.repoPath) return
+    const mapping = this.mappingFor(issue.teamId)
+    if (!mapping) return
+    // stale plan state must not survive a rewrite, and clearing the
+    // conversation id forces startPlanning down the fresh-session path
+    issue.planBody = undefined
+    issue.planQuestions = undefined
+    issue.codingSessionId = undefined
+    issue.chatSessionId = undefined
+    // '' still marks "this is a rewrite" for the prompt when no direction given
+    issue.rewriteInstructions = instructions?.trim() ?? ''
+    issue.phase = 'planning'
+    issue.lastError = undefined
+    // card back to Planning so the questions flow, plan-ready move, and retry
+    // all behave exactly like a normal planning run
+    await this.moveIfStillIn(issue, [mapping.planReadyStateId], mapping.planningStateId)
+    this.save(issue)
+    await this.startPlanning(issue, true) // explicit user action
   }
 
   /** User asked about / requested a change to the plan from the app — the chat stays in-app. */

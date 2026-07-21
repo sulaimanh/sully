@@ -196,6 +196,8 @@ export interface TrackedIssue {
   planBody?: string
   /** Blocking questions from the planning session — cached copy of the worktree questions file. */
   planQuestions?: PlanQuestion[]
+  /** User direction for a requested plan rewrite — consumed by the next fresh planning session */
+  rewriteInstructions?: string
   activeSessionId?: string
   prUrl?: string
   lastError?: string

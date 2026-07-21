@@ -108,20 +108,30 @@ export function buildPlanningCommand(
   config: PhaseConfig,
   issue: TrackedIssue,
   description: string | undefined,
-  worktreePath: string
+  worktreePath: string,
+  rewriteInstructions?: string
 ): string[] {
   const context = ticketContext(issue, description)
   const nonInteractive = `Run fully non-interactively: never wait for confirmation or ask by printing text — ${PLAN_QUESTIONS_FILE_REL} is the only channel for questions.`
+  // set (possibly empty) only when the user explicitly asked for a rewrite of
+  // an existing plan — the old plan file is still in the worktree and must not
+  // seed the new one
+  const rewrite =
+    rewriteInstructions !== undefined
+      ? `A previous plan for this ticket was rejected by the user. Write a completely new plan from scratch — do not reuse or anchor on the existing content of ${PLAN_FILE_REL}; overwrite it.${rewriteInstructions ? `\nThe user's direction for the new plan:\n${rewriteInstructions}` : ''}\n\n`
+      : ''
 
   if (config.agent === 'codex') {
-    const prompt = `Explore this codebase and produce a detailed implementation plan for the ticket below. Write the final plan as markdown to ${PLAN_FILE_REL} (create directories as needed). The plan must include: context, files to change, step-by-step implementation, and a verification section. Do NOT implement anything yet.\n\n${context}\n\n${PLAN_QUESTIONS_CONTRACT}\n${nonInteractive}`
+    const prompt = `${rewrite}Explore this codebase and produce a detailed implementation plan for the ticket below. Write the final plan as markdown to ${PLAN_FILE_REL} (create directories as needed). The plan must include: context, files to change, step-by-step implementation, and a verification section. Do NOT implement anything yet.\n\n${context}\n\n${PLAN_QUESTIONS_CONTRACT}\n${nonInteractive}`
     return codexArgs(config, prompt, worktreePath)
   }
 
   const lead = config.skill
     ? `${config.skill}\n\n`
     : `Explore this codebase and produce a detailed implementation plan for the ticket below. Do NOT implement anything yet.\n\n`
-  const prompt = `${lead}${context}\n\nWhen the plan is final, also write it as markdown to ${PLAN_FILE_REL} in this worktree (create directories as needed). It must include: context, files to change, step-by-step implementation, and a verification section.\n${PLAN_QUESTIONS_CONTRACT}\n${nonInteractive}`
+  // the rewrite note goes after the lead — a configured skill's slash command
+  // must stay at the very start of the prompt to trigger
+  const prompt = `${lead}${rewrite}${context}\n\nWhen the plan is final, also write it as markdown to ${PLAN_FILE_REL} in this worktree (create directories as needed). It must include: context, files to change, step-by-step implementation, and a verification section.\n${PLAN_QUESTIONS_CONTRACT}\n${nonInteractive}`
   return claudeArgs(config, prompt, ['--add-dir', worktreePath])
 }
 

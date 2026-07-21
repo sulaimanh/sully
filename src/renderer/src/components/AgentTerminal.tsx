@@ -20,6 +20,11 @@ export default function AgentTerminal({ issueId }: { issueId: string }): ReactEl
   const [attempt, setAttempt] = useState(0) // bumped by "Try again" / "New session"
   // pruned from termTabs when the shell exits — offer a fresh session then
   const alive = useApp((s) => (term ? s.termTabs.some((t) => t.id === term.id) : false))
+  // no worktree recorded yet means opening includes cutting the branch,
+  // creating the worktree, and installing deps — tell the user why it's slow
+  const creatingWorktree = useApp((s) =>
+    Boolean(s.issues[issueId] && !s.issues[issueId].worktreePath)
+  )
 
   useEffect(() => {
     let cancelled = false
@@ -68,8 +73,15 @@ export default function AgentTerminal({ issueId }: { issueId: string }): ReactEl
     )
   } else {
     body = (
-      <div className="flex h-full items-center justify-center">
-        <p className="breathe font-display text-[15px] text-ink-300">opening terminal…</p>
+      <div className="flex h-full flex-col items-center justify-center gap-1.5">
+        <p className="breathe font-display text-[15px] text-ink-300">
+          {creatingWorktree ? 'setting up the worktree…' : 'opening terminal…'}
+        </p>
+        {creatingWorktree && (
+          <p className="text-[11.5px] text-ink-400">
+            fetching origin, cutting the branch, installing dependencies
+          </p>
+        )}
       </div>
     )
   }

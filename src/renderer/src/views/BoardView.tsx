@@ -310,6 +310,8 @@ function PlanDialog({
 }): ReactElement {
   const [draft, setDraft] = useState<string | null>(null) // null = viewing
   const [saving, setSaving] = useState(false)
+  const [rewriting, setRewriting] = useState(false)
+  const [rewriteText, setRewriteText] = useState('')
   // closing only hides the pane — the pty keeps running and reattaches with
   // its scrollback when reopened
   const [termOpen, setTermOpen] = useState(false)
@@ -336,6 +338,14 @@ function PlanDialog({
     } finally {
       setSaving(false)
     }
+  }
+
+  const rewrite = async (): Promise<void> => {
+    await call(
+      window.sully.rewritePlan(issue.issueId, rewriteText.trim() || undefined),
+      `${issue.identifier} — rewriting plan`
+    )
+    onClose()
   }
 
   const actOnSelection = async ({ selection, instruction }: PlanSelectionAction): Promise<void> => {
@@ -459,12 +469,43 @@ function PlanDialog({
                 {saving ? 'Saving…' : 'Save plan'}
               </Button>
             </>
+          ) : rewriting ? (
+            <>
+              <input
+                value={rewriteText}
+                onChange={(e) => setRewriteText(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    e.preventDefault()
+                    void rewrite()
+                  }
+                }}
+                placeholder="Optional: what should be different this time?"
+                spellCheck={false}
+                autoFocus
+                className="hairline flex-1 rounded-lg border bg-ink-950/40 px-3 py-2 text-[12.5px] leading-relaxed text-ink-100 outline-none focus:border-brass-500/40"
+              />
+              <Button onClick={() => setRewriting(false)}>Cancel</Button>
+              <Button variant="primary" onClick={() => void rewrite()}>
+                <RotateCcw size={11} /> Rewrite plan
+              </Button>
+            </>
           ) : (
             <>
               {editable && (
-                <Button onClick={() => setDraft(body)} className="mr-auto">
-                  <Pencil size={11} /> Edit plan
-                </Button>
+                <div className="mr-auto flex items-center gap-2">
+                  <Button onClick={() => setDraft(body)}>
+                    <Pencil size={11} /> Edit plan
+                  </Button>
+                  {issue.repoPath && (
+                    <Button
+                      onClick={() => setRewriting(true)}
+                      title="Throw this plan away and have a fresh session write a new one"
+                    >
+                      <RotateCcw size={11} /> Rewrite plan
+                    </Button>
+                  )}
+                </div>
               )}
               <Button onClick={onClose}>Close</Button>
               <Button
@@ -1171,9 +1212,9 @@ function cardActions({
     })
   if (issue.repoPath)
     actions.push({
-      icon: <SquareTerminal size={13} />,
-      label: 'Open terminal',
-      onClick: () => void call(useApp.getState().openIssueTerminal(issue.issueId))
+      icon: <MessageSquarePlus size={13} />,
+      label: 'Chat with the agent',
+      onClick: onReprompt
     })
   if (devCommand && issue.repoPath)
     actions.push(
@@ -1189,12 +1230,6 @@ function cardActions({
             onClick: () => void call(window.sully.startDevServer(issue.issueId))
           }
     )
-  if (issue.phase === 'in_review' && !issue.activeSessionId && issue.repoPath)
-    actions.push({
-      icon: <MessageSquarePlus size={13} />,
-      label: 'Chat with the agent',
-      onClick: onReprompt
-    })
   return actions
 }
 
@@ -1517,7 +1552,7 @@ function IssueCard({
               <GitPullRequest size={13} />
             </Button>
           )}
-          {issue.phase === 'in_review' && !issue.activeSessionId && issue.repoPath && (
+          {issue.repoPath && (
             <Button className="px-1.5" onClick={onReprompt} title="Chat with the agent">
               <MessageSquarePlus size={13} />
             </Button>
