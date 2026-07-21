@@ -13,6 +13,7 @@ import {
   Copy,
   ExternalLink,
   FileText,
+  GitCommitHorizontal,
   GitPullRequest,
   MessageSquarePlus,
   MessagesSquare,
@@ -248,6 +249,57 @@ function ChatPanel({ issue, fill = false }: { issue: TrackedIssue; fill?: boolea
 
 /** Keep in sync with PLAN_FILE_REL in src/main/orchestrator/prompts.ts. */
 const PLAN_FILE = '.sully/plan.md'
+
+/**
+ * Uncommitted file count in the ticket's worktree — drives the commit & push
+ * buttons; re-checked when a session starts or finishes.
+ */
+function useLocalChanges(issue: TrackedIssue): number {
+  const [count, setCount] = useState(0)
+  useEffect(() => {
+    let cancelled = false
+    window.sully
+      .issueLocalChanges(issue.issueId)
+      .then((n) => {
+        if (!cancelled) setCount(n)
+      })
+      .catch(() => {})
+    return () => {
+      cancelled = true
+    }
+  }, [issue.issueId, issue.activeSessionId])
+  return count
+}
+
+function CommitPushButton({
+  issue,
+  localChanges,
+  full = false
+}: {
+  issue: TrackedIssue
+  localChanges: number
+  /** full-width row on the board card; default is the dialog's inline button */
+  full?: boolean
+}): ReactElement | null {
+  if (!issue.repoPath || localChanges === 0) return null
+  const files = `${localChanges} changed file${localChanges === 1 ? '' : 's'}`
+  return (
+    <Button
+      className={full ? 'mt-2.5 w-full justify-center' : undefined}
+      disabled={Boolean(issue.activeSessionId)}
+      onClick={() =>
+        void call(
+          window.sully.commitPushIssue(issue.issueId),
+          `Committing & pushing ${issue.identifier}`
+        )
+      }
+      title={`Commit the worktree's local changes (${files}) and push the branch to origin`}
+    >
+      <GitCommitHorizontal size={13} />
+      {full ? 'Commit & push' : `Commit & push (${files})`}
+    </Button>
+  )
+}
 
 function PlanDialog({
   issue,
@@ -975,6 +1027,7 @@ function TicketDetailsDialog({
   /** PR or Linear page shown in the in-dialog browser pane */
   const [browserUrl, setBrowserUrl] = useState<string | null>(null)
   const [menuOpen, setMenuOpen] = useState(false)
+  const localChanges = useLocalChanges(issue)
   const actions = cardActions({
     issue,
     session,
@@ -1066,6 +1119,7 @@ function TicketDetailsDialog({
 
       <footer className="hairline flex items-center justify-end gap-2 border-t px-6 py-3.5">
         <Button onClick={onClose}>Close</Button>
+        <CommitPushButton issue={issue} localChanges={localChanges} />
         {issue.prUrl && (
           <Button onClick={() => setBrowserUrl(issue.prUrl!)}>
             <GitPullRequest size={12} /> Open pull request
@@ -1216,6 +1270,7 @@ function IssueCard({
   const running = session?.status === 'running'
   const devRunning = devServer?.status === 'running'
   const repoName = issue.repoPath?.split('/').pop()
+  const localChanges = useLocalChanges(issue)
   const lastAgentMsg = [...(issue.chat ?? [])].reverse().find((m) => m.role === 'agent')
   const [menuOpen, setMenuOpen] = useState(false)
   const [errorExpanded, setErrorExpanded] = useState(false)
@@ -1512,6 +1567,7 @@ function IssueCard({
             </Button>
           )}
       </div>
+      <CommitPushButton issue={issue} localChanges={localChanges} full />
     </div>
   )
 }

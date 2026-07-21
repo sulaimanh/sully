@@ -76,6 +76,10 @@ const api = {
   addressGhComments: (issueId: string, itemIds: string[]): Promise<void> =>
     ipcRenderer.invoke(IPC.issueAddressGhComments, issueId, itemIds),
   retryIssue: (issueId: string): Promise<void> => ipcRenderer.invoke(IPC.issueRetry, issueId),
+  issueLocalChanges: (issueId: string): Promise<number> =>
+    ipcRenderer.invoke(IPC.issueLocalChanges, issueId),
+  commitPushIssue: (issueId: string): Promise<void> =>
+    ipcRenderer.invoke(IPC.issueCommitPush, issueId),
   moveIssue: (issueId: string, column: BoardColumn): Promise<void> =>
     ipcRenderer.invoke(IPC.issueMove, issueId, column),
   stopSession: (id: string): Promise<void> => ipcRenderer.invoke(IPC.sessionStop, id),

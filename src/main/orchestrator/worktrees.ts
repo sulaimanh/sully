@@ -200,6 +200,19 @@ export async function removeWorktree(repoPath: string, worktreePath: string): Pr
   await git(repoPath, ['worktree', 'remove', '--force', worktreePath])
 }
 
+/**
+ * Number of uncommitted paths in a worktree (staged, unstaged, untracked).
+ * The .sully directory is excluded — it's session bookkeeping, never shipped.
+ */
+export async function localChangesCount(worktreePath: string): Promise<number> {
+  try {
+    const out = await git(worktreePath, ['status', '--porcelain'])
+    return out.split('\n').filter((l) => l.trim() && !l.slice(3).startsWith('.sully')).length
+  } catch {
+    return 0
+  }
+}
+
 /** Current HEAD sha of a worktree, or null if it can't be resolved. */
 export async function headSha(worktreePath: string): Promise<string | null> {
   try {

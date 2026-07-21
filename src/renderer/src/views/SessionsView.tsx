@@ -11,6 +11,7 @@ const kindLabel: Record<Session['kind'], string> = {
   plan_feedback: 'plan feedback',
   coding: 'coding',
   create_pr: 'create pr',
+  commit_push: 'commit & push',
   reprompt: 'reprompt',
   pr_review: 'pr review',
   fetch_comments: 'fetch gh comments',

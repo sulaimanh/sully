@@ -21,6 +21,7 @@ import {
   PLAN_QUESTIONS_FILE_REL,
   buildCodingCommand,
   buildCodingResumeCommand,
+  buildCommitPushCommand,
   buildCreatePrCommand,
   buildPlanAnswersCommand,
   buildPlanChatResumeCommand,
@@ -1482,6 +1483,68 @@ export class Orchestrator extends EventEmitter {
     }
   }
 
+  // ---------- manual commit & push ----------
+
+  /**
+   * User clicked "Commit & push" on a ticket whose worktree has uncommitted
+   * changes (manual edits, a stopped session's leftovers). Runs a dedicated
+   * commit-push session; the ticket keeps its phase and Linear state.
+   */
+  async commitPush(issueId: string): Promise<void> {
+    const issue = this.store.get(issueId)
+    if (!issue || !issue.repoPath || issue.activeSessionId) return
+    if (!issue.worktreePath || !fs.existsSync(issue.worktreePath)) return
+
+    this.busy.add(issue.issueId)
+    try {
+      const config = settingsStore.get().phases.commitPush
+      const session = processManager.start({
+        kind: 'commit_push',
+        agent: config.agent,
+        model: config.model,
+        command: buildCommitPushCommand(config, issue, issue.worktreePath),
+        cwd: issue.worktreePath,
+        timeoutMs: config.timeoutMs,
+        issueId: issue.issueId,
+        issueIdentifier: issue.identifier
+      })
+      issue.activeSessionId = session.id
+      issue.lastError = undefined
+      this.save(issue)
+    } finally {
+      this.busy.delete(issue.issueId)
+    }
+  }
+
+  private async handleCommitPushFinished(issue: TrackedIssue, session: Session): Promise<void> {
+    // a manual commit never moves the ticket — release it and report the outcome
+    issue.activeSessionId = undefined
+    this.save(issue)
+    if (session.status !== 'done') {
+      this.emit('notify', {
+        title: `${issue.identifier} commit & push ${session.status}`,
+        body: sessionFailure('commit & push', session).slice(0, 200),
+        view: 'board'
+      })
+      return
+    }
+    // "pushed" must mean origin has the commits — a local commit with a failed
+    // push would otherwise report success. Offline skips the check.
+    const sha = issue.worktreePath ? await headSha(issue.worktreePath) : null
+    let pushed = true
+    if (sha && issue.worktreePath) {
+      const remote = await remoteBranchSha(issue.worktreePath, issue.branchName)
+      if (remote !== null) pushed = remote === sha
+    }
+    this.emit('notify', {
+      title: `${issue.identifier} ${pushed ? 'changes pushed' : 'push may have failed'}`,
+      body: pushed
+        ? `Local changes committed and pushed to ${issue.branchName}.`
+        : 'Changes were committed, but the branch on GitHub is behind — check the session log.',
+      view: 'board'
+    })
+  }
+
   // ---------- shared ----------
 
   /** Per-ticket spend rollup + a one-time budget warning. */
@@ -1508,6 +1571,7 @@ export class Orchestrator extends EventEmitter {
     else if (session.kind === 'plan_feedback') await this.handleFeedbackFinished(issue, session)
     else if (session.kind === 'coding') await this.handleCodingFinished(issue, session)
     else if (session.kind === 'create_pr') await this.handleCreatePrFinished(issue, session)
+    else if (session.kind === 'commit_push') await this.handleCommitPushFinished(issue, session)
     else if (session.kind === 'reprompt') await this.handleRepromptFinished(issue, session)
     else if (session.kind === 'fetch_comments') {
       // legacy fetch session from before the poll auto-fetched comments —

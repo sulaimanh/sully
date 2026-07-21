@@ -1,7 +1,13 @@
 // Shared contracts between main, preload, and renderer.
 
 export type PhaseKey =
-  'planning' | 'coding' | 'createPr' | 'addressComments' | 'prReview' | 'errorInvestigation'
+  | 'planning'
+  | 'coding'
+  | 'createPr'
+  | 'commitPush'
+  | 'addressComments'
+  | 'prReview'
+  | 'errorInvestigation'
 
 export type AgentKind = 'claude' | 'codex'
 
@@ -105,6 +111,7 @@ export interface Session {
     | 'plan_feedback'
     | 'coding'
     | 'create_pr'
+    | 'commit_push'
     | 'reprompt'
     | 'pr_review'
     | 'fetch_comments' // legacy — kept so old persisted session records still render
@@ -304,6 +311,7 @@ export interface PhaseSettings {
   planning: PhaseConfig
   coding: PhaseConfig
   createPr: PhaseConfig
+  commitPush: PhaseConfig
   addressComments: PhaseConfig
   prReview: PhaseConfig
   errorInvestigation: PhaseConfig
@@ -503,8 +511,8 @@ export interface CredentialStatus {
 }
 
 // Models are tiered by phase difficulty: Opus where quality pays for itself
-// (planning, coding), Haiku for the mechanical create-pr phase, Sonnet for
-// read-and-report work. Effort is left at the CLI default on purpose.
+// (planning, coding), Haiku for the mechanical create-pr and commit-push
+// phases, Sonnet for read-and-report work. Effort is left at the CLI default on purpose.
 // Coding/create-pr/pr-review don't need MCP servers, so they skip loading
 // their tool schemas; planning and error investigation keep them (Linear,
 // Figma) for ticket and design context.
@@ -524,6 +532,13 @@ export function defaultPhaseSettings(): PhaseSettings {
       mcp: false
     },
     createPr: {
+      agent: 'claude',
+      model: 'haiku',
+      permissionMode: 'bypass',
+      timeoutMs: 15 * 60_000,
+      mcp: false
+    },
+    commitPush: {
       agent: 'claude',
       model: 'haiku',
       permissionMode: 'bypass',

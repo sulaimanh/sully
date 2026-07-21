@@ -26,6 +26,8 @@ export const IPC = {
   issueAddressGhComments: 'issue:address-gh-comments',
   issueRetry: 'issue:retry',
   issueMove: 'issue:move',
+  issueLocalChanges: 'issue:local-changes',
+  issueCommitPush: 'issue:commit-push',
   sessionStop: 'session:stop',
   sessionReadLog: 'session:read-log',
   sessionReadEvents: 'session:read-events',

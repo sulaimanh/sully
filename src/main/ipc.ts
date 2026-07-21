@@ -23,7 +23,7 @@ import { fetchErrorIssues } from './posthog/errors'
 import { buildErrorInvestigationCommand } from './orchestrator/prompts'
 import { orchestrator, resumableSessionId } from './orchestrator/Orchestrator'
 import { binaryPath } from './env'
-import { ensureWorktree, installDeps } from './orchestrator/worktrees'
+import { ensureWorktree, installDeps, localChangesCount } from './orchestrator/worktrees'
 import { prReviewWatcher } from './pr-review/PRReviewWatcher'
 import { processManager } from './process/ProcessManager'
 import { ptyManager } from './process/PtyManager'
@@ -175,6 +175,12 @@ export function registerIpc(): void {
     orchestrator.addressGhComments(issueId, itemIds)
   )
   ipcMain.handle(IPC.issueRetry, (_e, issueId: string) => orchestrator.retry(issueId))
+  ipcMain.handle(IPC.issueLocalChanges, (_e, issueId: string) => {
+    const issue = orchestrator.issues().find((i) => i.issueId === issueId)
+    if (!issue?.worktreePath || !fs.existsSync(issue.worktreePath)) return 0
+    return localChangesCount(issue.worktreePath)
+  })
+  ipcMain.handle(IPC.issueCommitPush, (_e, issueId: string) => orchestrator.commitPush(issueId))
   ipcMain.handle(IPC.issueMove, (_e, issueId: string, column: BoardColumn) =>
     orchestrator.moveToColumn(issueId, column)
   )

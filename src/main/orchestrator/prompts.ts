@@ -343,6 +343,30 @@ export function buildCreatePrCommand(
   return claudeArgs(config, prompt)
 }
 
+/**
+ * Manual "Commit & push" from the ticket details: ship whatever sits
+ * uncommitted in the worktree (manual edits, a stopped session's leftovers)
+ * to the ticket's branch on origin — no PR creation, no ticket movement.
+ */
+export function buildCommitPushCommand(
+  config: PhaseConfig,
+  issue: TrackedIssue,
+  worktreePath: string
+): string[] {
+  const builtin = `This worktree for ticket ${issue.identifier} (${issue.url}) has uncommitted local changes. Review them (git status, git diff), commit them in logical commits with clear messages, and push the branch "${issue.branchName}" to origin. ${SYNC_BRANCH(issue.branchName)} Never commit the .sully directory. Do NOT open a pull request.`
+  const nonInteractive =
+    'Run fully non-interactively: never ask questions or wait for confirmation.'
+
+  if (config.agent === 'codex') {
+    return codexArgs(config, `${builtin}\n${nonInteractive}`, worktreePath)
+  }
+
+  const prompt = config.skill
+    ? `${config.skill}\n\n${builtin}\n${nonInteractive}`
+    : `${builtin}\n${nonInteractive}`
+  return claudeArgs(config, prompt)
+}
+
 export function buildErrorInvestigationCommand(
   config: PhaseConfig,
   error: ErrorTrackingIssue,

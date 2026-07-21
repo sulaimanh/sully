@@ -19,6 +19,7 @@ class SettingsStore extends EventEmitter {
         planning: { ...base.phases.planning, ...stored.phases?.planning },
         coding: { ...base.phases.coding, ...stored.phases?.coding },
         createPr: { ...base.phases.createPr, ...stored.phases?.createPr },
+        commitPush: { ...base.phases.commitPush, ...stored.phases?.commitPush },
         addressComments: { ...base.phases.addressComments, ...stored.phases?.addressComments },
         prReview: { ...base.phases.prReview, ...stored.phases?.prReview },
         errorInvestigation: {
