@@ -88,6 +88,8 @@ const api = {
   figmaAddressComments: (issueId: string, commentIds: string[]): Promise<void> =>
     ipcRenderer.invoke(IPC.figmaAddressComments, issueId, commentIds),
   retryIssue: (issueId: string): Promise<void> => ipcRenderer.invoke(IPC.issueRetry, issueId),
+  dismissIssueError: (issueId: string): Promise<void> =>
+    ipcRenderer.invoke(IPC.issueDismissError, issueId),
   issueLocalChanges: (issueId: string): Promise<number> =>
     ipcRenderer.invoke(IPC.issueLocalChanges, issueId),
   commitPushIssue: (issueId: string): Promise<void> =>

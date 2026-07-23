@@ -2149,6 +2149,42 @@ export class Orchestrator extends EventEmitter {
   }
 
   /**
+   * Clear a ticket's error without relaunching anything. Wipes lastError and
+   * resets the phase to whatever its current column implies, dropping the card
+   * back into that column, idle. For when the user fixed the cause out of band
+   * and wants the ticket out of the "needs attention" strip without re-running
+   * the failed step. (With automation on, the poll may then resume an active
+   * column — Planning/In progress — exactly as it would for any idle card
+   * sitting there; automation off leaves it parked.)
+   */
+  async dismissError(issueId: string): Promise<void> {
+    const issue = this.store.get(issueId)
+    if (!issue || issue.phase !== 'error' || issue.activeSessionId) return
+    let column: ColumnKind | null
+    if (issue.local) {
+      column = localColumnOf(issue)
+    } else {
+      const mapping = this.mappingFor(issue.teamId)
+      if (!mapping) return
+      column = this.columnKind(issue.stateId, mapping)
+    }
+    // the plan file on disk is the source of truth for whether a plan exists
+    if (!issue.planBody) issue.planBody = this.readPlanFile(issue) ?? undefined
+    issue.lastError = undefined
+    issue.phase =
+      column === 'planReady'
+        ? 'plan_ready'
+        : column === 'inProgress'
+          ? 'coding'
+          : column === 'inReview'
+            ? 'in_review'
+            : column === 'planning'
+              ? 'planning'
+              : 'uncategorized'
+    this.save(issue)
+  }
+
+  /**
    * User dropped a card on a board column. Only Linear is written — the next
    * poll reacts exactly as if the ticket had been dragged inside Linear (the
    * backward-drag re-plan detection relies on local stateId still holding the

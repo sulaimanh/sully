@@ -9,6 +9,7 @@ import {
 } from 'react'
 import ReactMarkdown, { type Components } from 'react-markdown'
 import {
+  CircleCheck,
   CircleHelp,
   Copy,
   ExternalLink,
@@ -1730,6 +1731,16 @@ function cardActions({
 }): CardAction[] {
   const devRunning = devServer?.status === 'running'
   const actions: CardAction[] = []
+  if (issue.phase === 'error')
+    actions.push({
+      icon: <CircleCheck size={13} />,
+      label: 'Dismiss error',
+      onClick: () =>
+        void call(
+          window.sully.dismissIssueError(issue.issueId),
+          `Cleared error on ${issue.identifier}`
+        )
+    })
   if (session)
     actions.push({ icon: <ScrollText size={13} />, label: 'View session log', onClick: onViewLog })
   if (issue.planBody)
@@ -2073,14 +2084,27 @@ function IssueCard({
             </Button>
           )}
           {issue.phase === 'error' && (
-            <Button
-              onClick={() =>
-                void call(window.sully.retryIssue(issue.issueId), `Retrying ${issue.identifier}`)
-              }
-              title="Retry the failed step"
-            >
-              <RotateCcw size={11} /> Retry
-            </Button>
+            <>
+              <Button
+                onClick={() =>
+                  void call(window.sully.retryIssue(issue.issueId), `Retrying ${issue.identifier}`)
+                }
+                title="Retry the failed step"
+              >
+                <RotateCcw size={11} /> Retry
+              </Button>
+              <Button
+                onClick={() =>
+                  void call(
+                    window.sully.dismissIssueError(issue.issueId),
+                    `Cleared error on ${issue.identifier}`
+                  )
+                }
+                title="Clear the error without retrying — returns the card to its column"
+              >
+                <CircleCheck size={11} /> Dismiss
+              </Button>
+            </>
           )}
           {devCommand && issue.repoPath && (
             <Button

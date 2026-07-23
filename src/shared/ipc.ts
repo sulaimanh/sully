@@ -30,6 +30,7 @@ export const IPC = {
   figmaMarkAddressed: 'figma:mark-addressed',
   figmaAddressComments: 'figma:address-comments',
   issueRetry: 'issue:retry',
+  issueDismissError: 'issue:dismiss-error',
   issueMove: 'issue:move',
   issueCreateLocal: 'issue:create-local',
   issueUpdateLocal: 'issue:update-local',

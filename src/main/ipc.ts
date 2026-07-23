@@ -202,6 +202,7 @@ export function registerIpc(): void {
     orchestrator.addressFigmaComments(issueId, commentIds)
   )
   ipcMain.handle(IPC.issueRetry, (_e, issueId: string) => orchestrator.retry(issueId))
+  ipcMain.handle(IPC.issueDismissError, (_e, issueId: string) => orchestrator.dismissError(issueId))
   ipcMain.handle(IPC.issueLocalChanges, (_e, issueId: string) => {
     const issue = orchestrator.issues().find((i) => i.issueId === issueId)
     if (!issue?.worktreePath || !fs.existsSync(issue.worktreePath)) return 0
