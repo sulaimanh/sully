@@ -15,6 +15,7 @@ import {
   FileText,
   GitCommitHorizontal,
   GitPullRequest,
+  MapPin,
   MessageSquarePlus,
   MessagesSquare,
   MoreHorizontal,
@@ -23,6 +24,7 @@ import {
   Plus,
   Rocket,
   RotateCcw,
+  RotateCw,
   ScrollText,
   Square,
   SquareTerminal,
@@ -34,6 +36,7 @@ import type {
   BoardColumn,
   DeployBump,
   DevServer,
+  FigmaCommentItem,
   GhReviewItem,
   IssueComment,
   IssuePhase,
@@ -252,20 +255,26 @@ const PLAN_FILE = '.sully/plan.md'
 
 /**
  * Uncommitted file count in the ticket's worktree — drives the commit & push
- * buttons; re-checked when a session starts or finishes.
+ * buttons; re-checked when a session starts or finishes, and polled so changes
+ * made outside a session (manual edits) still surface the button.
  */
 function useLocalChanges(issue: TrackedIssue): number {
   const [count, setCount] = useState(0)
   useEffect(() => {
     let cancelled = false
-    window.sully
-      .issueLocalChanges(issue.issueId)
-      .then((n) => {
-        if (!cancelled) setCount(n)
-      })
-      .catch(() => {})
+    const fetchCount = (): void => {
+      window.sully
+        .issueLocalChanges(issue.issueId)
+        .then((n) => {
+          if (!cancelled) setCount(n)
+        })
+        .catch(() => {})
+    }
+    fetchCount()
+    const id = setInterval(fetchCount, 5000)
     return () => {
       cancelled = true
+      clearInterval(id)
     }
   }, [issue.issueId, issue.activeSessionId])
   return count
@@ -395,7 +404,7 @@ function PlanDialog({
       onClose={onClose}
     >
       <header className="hairline flex flex-col gap-3 border-b px-6 py-4">
-        <div>
+        <div className="selectable">
           <p className="font-mono text-[11px] uppercase tracking-[0.18em] text-brass-400">
             implementation plan
           </p>
@@ -409,14 +418,6 @@ function PlanDialog({
           )}
         </div>
         <div className="flex items-center gap-3 self-end">
-          {issue.repoPath && issue.phase !== 'planning' && (
-            <Button
-              onClick={() => setTermOpen(!termOpen)}
-              title={termOpen ? 'Hide the agent terminal' : 'Show the agent terminal'}
-            >
-              <SquareTerminal size={12} /> {termOpen ? 'Hide terminal' : 'Terminal'}
-            </Button>
-          )}
           <DockControls />
           <button onClick={onClose} className="text-ink-300 hover:text-ink-50">
             <X size={17} />
@@ -458,8 +459,8 @@ function PlanDialog({
       {draft === null && issue.phase !== 'planning' && !issue.repoPath && (
         <ChatPanel issue={issue} />
       )}
-      {issue.phase === 'plan_ready' && (
-        <footer className="hairline flex justify-end gap-2 border-t px-6 py-3.5">
+      {(issue.phase === 'plan_ready' || (issue.repoPath && issue.phase !== 'planning')) && (
+        <footer className="hairline flex items-center justify-end gap-2 border-t px-6 py-3.5">
           {draft !== null ? (
             <>
               <Button onClick={() => setDraft(null)} disabled={saving}>
@@ -492,34 +493,48 @@ function PlanDialog({
             </>
           ) : (
             <>
-              {editable && (
-                <div className="mr-auto flex items-center gap-2">
-                  <Button onClick={() => setDraft(body)}>
-                    <Pencil size={11} /> Edit plan
+              <div className="mr-auto flex items-center gap-2">
+                {issue.repoPath && (
+                  <Button
+                    onClick={() => setTermOpen(!termOpen)}
+                    title={termOpen ? 'Hide the agent terminal' : 'Show the agent terminal'}
+                  >
+                    <SquareTerminal size={12} /> {termOpen ? 'Hide terminal' : 'Terminal'}
                   </Button>
-                  {issue.repoPath && (
-                    <Button
-                      onClick={() => setRewriting(true)}
-                      title="Throw this plan away and have a fresh session write a new one"
-                    >
-                      <RotateCcw size={11} /> Rewrite plan
+                )}
+                {editable && (
+                  <>
+                    <Button onClick={() => setDraft(body)}>
+                      <Pencil size={11} /> Edit plan
                     </Button>
-                  )}
-                </div>
+                    {issue.repoPath && (
+                      <Button
+                        onClick={() => setRewriting(true)}
+                        title="Throw this plan away and have a fresh session write a new one"
+                      >
+                        <RotateCcw size={11} /> Rewrite plan
+                      </Button>
+                    )}
+                  </>
+                )}
+              </div>
+              {issue.phase === 'plan_ready' && (
+                <>
+                  <Button onClick={onClose}>Close</Button>
+                  <Button
+                    variant="primary"
+                    onClick={() => {
+                      void call(
+                        window.sully.approvePlan(issue.issueId),
+                        `${issue.identifier} approved — coding started`
+                      )
+                      onClose()
+                    }}
+                  >
+                    <ThumbsUp size={12} /> Approve &amp; start coding
+                  </Button>
+                </>
               )}
-              <Button onClick={onClose}>Close</Button>
-              <Button
-                variant="primary"
-                onClick={() => {
-                  void call(
-                    window.sully.approvePlan(issue.issueId),
-                    `${issue.identifier} approved — coding started`
-                  )
-                  onClose()
-                }}
-              >
-                <ThumbsUp size={12} /> Approve &amp; start coding
-              </Button>
             </>
           )}
         </footer>
@@ -565,7 +580,7 @@ function PlanQuestionsDialog({
       onClose={onClose}
     >
       <header className="hairline flex flex-col gap-3 border-b px-6 py-4">
-        <div>
+        <div className="selectable">
           <p className="font-mono text-[11px] uppercase tracking-[0.18em] text-brass-400">
             agent questions
           </p>
@@ -584,7 +599,7 @@ function PlanQuestionsDialog({
         </div>
       </header>
 
-      <div className="min-h-0 flex-1 overflow-y-auto px-6 py-4">
+      <div className="selectable min-h-0 flex-1 overflow-y-auto px-6 py-4">
         <div className="flex flex-col gap-4">
           {questions.map((q, idx) => (
             <div key={q.id} className="hairline rounded-xl border bg-ink-850 p-4">
@@ -741,7 +756,7 @@ function GhReviewDialog({
       onClose={onClose}
     >
       <header className="hairline flex flex-col gap-3 border-b px-6 py-4">
-        <div>
+        <div className="selectable">
           <p className="font-mono text-[11px] uppercase tracking-[0.18em] text-brass-400">
             github review
           </p>
@@ -757,19 +772,8 @@ function GhReviewDialog({
         </div>
       </header>
 
-      <div className="hairline flex items-center gap-2 border-b px-6 py-2.5">
-        {issue.repoPath && (
-          <Button
-            onClick={() => setTermOpen(!termOpen)}
-            title={termOpen ? 'Hide the agent terminal' : 'Show the agent terminal'}
-          >
-            <SquareTerminal size={12} /> {termOpen ? 'Hide terminal' : 'Terminal'}
-          </Button>
-        )}
-      </div>
-
       <TerminalDock issueId={issue.issueId} open={termOpen && Boolean(issue.repoPath)}>
-        <div className="min-h-0 flex-1 overflow-y-auto px-6 py-4">
+        <div className="selectable min-h-0 flex-1 overflow-y-auto px-6 py-4">
           {items.length === 0 ? (
             <p className="font-display text-[13px] text-ink-400">
               No open review comments on the PR.
@@ -832,26 +836,40 @@ function GhReviewDialog({
         </div>
       </TerminalDock>
 
-      {open.length > 0 && (
+      {(open.length > 0 || issue.repoPath) && (
         <footer className="hairline flex items-center justify-between border-t px-6 py-3">
-          <button
-            className="text-[11px] text-ink-400 hover:text-ink-100"
-            onClick={() =>
-              setSelected(
-                selected.size === open.length ? new Set() : new Set(open.map((i) => i.id))
-              )
-            }
-          >
-            {selected.size === open.length ? 'clear selection' : 'select all'}
-          </button>
-          <Button variant="primary" disabled={busy || selected.size === 0} onClick={address}>
-            <ThumbsUp size={11} /> Address selected ({selected.size})
-          </Button>
+          <div className="flex items-center gap-3">
+            {issue.repoPath && (
+              <Button
+                onClick={() => setTermOpen(!termOpen)}
+                title={termOpen ? 'Hide the agent terminal' : 'Show the agent terminal'}
+              >
+                <SquareTerminal size={12} /> {termOpen ? 'Hide terminal' : 'Terminal'}
+              </Button>
+            )}
+            {open.length > 0 && (
+              <button
+                className="text-[11px] text-ink-400 hover:text-ink-100"
+                onClick={() =>
+                  setSelected(
+                    selected.size === open.length ? new Set() : new Set(open.map((i) => i.id))
+                  )
+                }
+              >
+                {selected.size === open.length ? 'clear selection' : 'select all'}
+              </button>
+            )}
+          </div>
+          {open.length > 0 && (
+            <Button variant="primary" disabled={busy || selected.size === 0} onClick={address}>
+              <ThumbsUp size={11} /> Address selected ({selected.size})
+            </Button>
+          )}
         </footer>
       )}
 
       {/* same as PlanDialog: tickets with a repo get the dockable agent
-            terminal (toggled from the toolbar, hidden by default), repo-less
+            terminal (toggled from the footer, hidden by default), repo-less
             tickets keep the headless chat */}
       {!issue.repoPath && <ChatPanel issue={issue} />}
     </DockablePanel>
@@ -1037,6 +1055,379 @@ function TicketComments({
 }
 
 /**
+ * Deep link to a comment's pin — must match figmaCommentUrl in
+ * src/main/figma/comments.ts (pure string math, duplicated to keep the
+ * preload surface small).
+ */
+function figmaCommentUrl(c: FigmaCommentItem): string {
+  const node = c.nodeId ? `?node-id=${c.nodeId.replace(':', '-')}` : ''
+  return `https://www.figma.com/design/${c.fileKey}${node}#${c.id}`
+}
+
+/**
+ * Figma comments on the ticket's linked design files — the "Design feedback"
+ * section under the Linear comments. Select comments and send them to the
+ * agent (same flow as the GitHub review modal), or mark them addressed
+ * locally; Figma's REST API has no resolve endpoint, so resolving stays in
+ * Figma and resolved threads are hidden behind a toggle.
+ */
+function FigmaComments({
+  issue,
+  onOpenLink
+}: {
+  issue: TrackedIssue
+  onOpenLink: (url: string) => void
+}): ReactElement | null {
+  const tokenSet = useApp((s) => Boolean(s.credentials?.figmaTokenSet))
+  // starts true when a fetch will fire on mount, so the first paint says "loading"
+  const [loading, setLoading] = useState(tokenSet)
+  const [failed, setFailed] = useState(false)
+  const [showResolved, setShowResolved] = useState(false)
+  const [selected, setSelected] = useState<Set<string>>(new Set())
+  /** editing the manual Figma-file override */
+  const [editing, setEditing] = useState(false)
+  const [urlDraft, setUrlDraft] = useState('')
+
+  useEffect(() => {
+    if (!tokenSet) return
+    let cancelled = false
+    window.sully
+      .figmaRefreshComments(issue.issueId)
+      .then(() => !cancelled && setFailed(false))
+      .catch(() => !cancelled && setFailed(true))
+      .finally(() => !cancelled && setLoading(false))
+    return () => {
+      cancelled = true
+    }
+  }, [issue.issueId, tokenSet])
+
+  const refresh = (): void => {
+    if (!tokenSet || loading) return
+    setLoading(true)
+    window.sully
+      .figmaRefreshComments(issue.issueId)
+      .then(() => setFailed(false))
+      .catch(() => setFailed(true))
+      .finally(() => setLoading(false))
+  }
+
+  const items = issue.figmaComments ?? []
+  const byNewest = (a: FigmaCommentItem, b: FigmaCommentItem): number =>
+    (b.createdAt ?? '').localeCompare(a.createdAt ?? '')
+  const open = items.filter((i) => !i.addressedAt && !i.resolvedAt).sort(byNewest)
+  const addressed = items.filter((i) => i.addressedAt && !i.resolvedAt).sort(byNewest)
+  const resolved = items.filter((i) => i.resolvedAt).sort(byNewest)
+
+  // the poll refreshes items in place (ids are stable) — drop picks whose
+  // comment got addressed or resolved, keep the rest
+  const [seenItems, setSeenItems] = useState(issue.figmaComments)
+  if (seenItems !== issue.figmaComments) {
+    setSeenItems(issue.figmaComments)
+    setSelected(new Set([...selected].filter((id) => open.some((i) => i.id === id))))
+  }
+
+  const links = issue.figmaLinks ?? []
+  const manual = links.some((l) => l.source === 'manual')
+
+  const startEdit = (): void => {
+    setUrlDraft(manual ? (links[0]?.url ?? '') : '')
+    setEditing(true)
+  }
+  /** empty url clears the manual override and reverts to auto-detected links */
+  const setLink = (url: string): void => {
+    setEditing(false)
+    void call(
+      window.sully.figmaSetLink(issue.issueId, url),
+      url ? `Fetching design comments from the new Figma link on ${issue.identifier}` : undefined
+    )
+  }
+
+  const linkEditor = editing && (
+    <div className="mt-3 flex items-center gap-2">
+      <input
+        value={urlDraft}
+        onChange={(e) => setUrlDraft(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter' && urlDraft.trim()) setLink(urlDraft.trim())
+          if (e.key === 'Escape') setEditing(false)
+        }}
+        placeholder="https://www.figma.com/design/…"
+        spellCheck={false}
+        autoFocus
+        className="hairline min-w-0 flex-1 rounded-lg border bg-ink-950/40 px-3 py-1.5 font-mono text-[11.5px] text-ink-100 outline-none focus:border-brass-500/40"
+      />
+      <Button
+        variant="primary"
+        disabled={!urlDraft.trim()}
+        onClick={() => setLink(urlDraft.trim())}
+      >
+        Save
+      </Button>
+      <Button onClick={() => setEditing(false)}>Cancel</Button>
+    </div>
+  )
+
+  if (links.length === 0) {
+    return (
+      <div className="hairline mt-6 border-t pt-4">
+        {editing ? (
+          <>
+            <p className="font-mono text-[11px] uppercase tracking-[0.18em] text-brass-400">
+              design feedback
+            </p>
+            {linkEditor}
+          </>
+        ) : (
+          <button
+            onClick={startEdit}
+            className="text-[11px] text-ink-500 hover:text-ink-200"
+            title="Fetch designer comments from a Figma file for this ticket"
+          >
+            + link a Figma file for design feedback
+          </button>
+        )}
+      </div>
+    )
+  }
+
+  const busy = Boolean(issue.activeSessionId)
+  const canSend = !busy && (issue.phase === 'plan_ready' || issue.phase === 'in_review')
+
+  const toggle = (id: string): void => {
+    const next = new Set(selected)
+    if (next.has(id)) next.delete(id)
+    else next.add(id)
+    setSelected(next)
+  }
+
+  const send = (): void => {
+    const ids = [...selected]
+    setSelected(new Set())
+    void call(
+      window.sully.figmaAddressComments(issue.issueId, ids),
+      `Sending ${ids.length} design comment${ids.length === 1 ? '' : 's'} to the agent on ${issue.identifier}`
+    )
+  }
+
+  const meta = (item: FigmaCommentItem): ReactElement => (
+    <>
+      {item.orderId && (
+        <span className="rounded bg-ink-700 px-1.5 py-px text-ink-200">#{item.orderId}</span>
+      )}
+      {item.author && <span className="text-brass-300">{item.author}</span>}
+      {item.createdAt && <span>{timeAgo(item.createdAt)}</span>}
+      <button
+        onClick={(e) => {
+          e.preventDefault()
+          onOpenLink(figmaCommentUrl(item))
+        }}
+        title="Open this comment's pin in Figma"
+        className="text-ink-300 hover:text-ink-50"
+      >
+        <MapPin size={11} />
+      </button>
+    </>
+  )
+
+  const body = (item: FigmaCommentItem): ReactElement => (
+    <div className="prose-plan mt-1 text-[12.5px]">
+      <ReactMarkdown components={paneLinkComponents(onOpenLink)}>{item.message}</ReactMarkdown>
+    </div>
+  )
+
+  /** addressed / resolved cards: display-only record, dimmed */
+  const doneCard = (item: FigmaCommentItem): ReactElement => (
+    <div
+      key={item.id}
+      className="hairline flex gap-3 rounded-xl border bg-ink-850 p-3.5 opacity-55"
+    >
+      <div className="min-w-0 flex-1">
+        <p className="flex flex-wrap items-center gap-2 font-mono text-[10.5px] text-ink-400">
+          {meta(item)}
+          <span className="rounded bg-ink-700 px-1.5 py-0.5 text-[9.5px] uppercase tracking-wide text-ink-200">
+            {item.resolvedAt ? 'resolved in figma' : `addressed ${timeAgo(item.addressedAt!)}`}
+          </span>
+          {!item.resolvedAt && (
+            <button
+              onClick={() =>
+                void call(window.sully.figmaMarkAddressed(issue.issueId, [item.id], false))
+              }
+              className="ml-auto text-[10.5px] text-ink-400 hover:text-ink-100"
+            >
+              undo
+            </button>
+          )}
+        </p>
+        {body(item)}
+      </div>
+    </div>
+  )
+
+  return (
+    <div className="hairline mt-6 border-t pt-4">
+      <div className="flex flex-wrap items-center gap-2">
+        <p className="font-mono text-[11px] uppercase tracking-[0.18em] text-brass-400">
+          design feedback
+        </p>
+        {links.map((l) => (
+          <button
+            key={l.fileKey}
+            onClick={() => onOpenLink(l.url)}
+            title={
+              l.nodeId
+                ? 'Open the Figma file — comments are filtered to the linked frame'
+                : 'Open the Figma file'
+            }
+            className="max-w-[220px] truncate rounded bg-ink-700 px-1.5 py-px font-mono text-[10.5px] text-ink-200 hover:text-ink-50"
+          >
+            {l.fileName ?? l.fileKey}
+          </button>
+        ))}
+        {links.some((l) => l.nodeId) && (
+          <span
+            className="font-mono text-[10px] text-ink-500"
+            title="The link points at a specific node, so only comments pinned inside that frame show here. Link the file without a node-id to see all file comments."
+          >
+            · linked frame only
+          </span>
+        )}
+        <span className="ml-auto flex items-center gap-3">
+          {manual && (
+            <button
+              onClick={() => setLink('')}
+              className="text-[11px] text-ink-400 hover:text-ink-100"
+              title="Remove the manual link and go back to links detected in the ticket"
+            >
+              use auto-detect
+            </button>
+          )}
+          {resolved.length > 0 && (
+            <button
+              onClick={() => setShowResolved(!showResolved)}
+              className="text-[11px] text-ink-400 hover:text-ink-100"
+            >
+              {showResolved ? 'hide resolved' : `show resolved (${resolved.length})`}
+            </button>
+          )}
+          <button
+            onClick={startEdit}
+            title="Change which Figma file comments are fetched from"
+            className="text-ink-300 hover:text-ink-50"
+          >
+            <Pencil size={11} />
+          </button>
+          <button
+            onClick={refresh}
+            disabled={loading || !tokenSet}
+            title="Refresh Figma comments"
+            className="text-ink-300 hover:text-ink-50 disabled:opacity-50"
+          >
+            <RotateCw size={12} className={loading ? 'animate-spin' : undefined} />
+          </button>
+        </span>
+      </div>
+
+      {linkEditor}
+
+      {!tokenSet ? (
+        <p className="mt-3 text-[12.5px] italic text-ink-400">
+          Add a Figma token under Settings → Credentials to see design comments.
+        </p>
+      ) : loading && items.length === 0 ? (
+        <p className="mt-3 text-[12.5px] italic text-ink-400">Loading design feedback…</p>
+      ) : failed && items.length === 0 ? (
+        <p className="mt-3 text-[12.5px] italic text-ink-400">Couldn&apos;t load Figma comments.</p>
+      ) : open.length === 0 && addressed.length === 0 && resolved.length === 0 ? (
+        <p className="mt-3 text-[12.5px] italic text-ink-400">
+          No comments on the linked Figma {links.some((l) => l.nodeId) ? 'frame' : 'file'}
+          {links.length === 1 ? '' : 's'}.
+        </p>
+      ) : (
+        <div className="mt-4 flex flex-col gap-2.5">
+          {open.map((item) => (
+            <label
+              key={item.id}
+              className={cn(
+                'hairline flex cursor-pointer gap-3 rounded-xl border bg-ink-850 p-3.5 transition-colors',
+                selected.has(item.id) ? 'border-brass-500/40' : 'hover:border-ink-600'
+              )}
+            >
+              <input
+                type="checkbox"
+                className="mt-1 shrink-0"
+                checked={selected.has(item.id)}
+                onChange={() => toggle(item.id)}
+              />
+              <div className="min-w-0 flex-1">
+                <p className="flex flex-wrap items-center gap-2 font-mono text-[10.5px] text-ink-400">
+                  {meta(item)}
+                  <button
+                    onClick={(e) => {
+                      e.preventDefault()
+                      void call(window.sully.figmaMarkAddressed(issue.issueId, [item.id], true))
+                    }}
+                    className="ml-auto text-[10.5px] text-ink-400 hover:text-ink-100"
+                  >
+                    mark addressed
+                  </button>
+                </p>
+                {body(item)}
+              </div>
+            </label>
+          ))}
+          {addressed.length > 0 && (
+            <p className="mt-2 font-mono text-[10.5px] uppercase tracking-[0.18em] text-ink-500">
+              addressed
+            </p>
+          )}
+          {addressed.map(doneCard)}
+          {showResolved && resolved.length > 0 && (
+            <p className="mt-2 font-mono text-[10.5px] uppercase tracking-[0.18em] text-ink-500">
+              resolved in figma
+            </p>
+          )}
+          {showResolved && resolved.map(doneCard)}
+          {open.length === 0 && addressed.length + resolved.length > 0 && (
+            <p className="text-[12.5px] italic text-ink-400">No open comments.</p>
+          )}
+        </div>
+      )}
+
+      {open.length > 0 && (
+        <div className="mt-3 flex items-center justify-between">
+          <button
+            className="text-[11px] text-ink-400 hover:text-ink-100"
+            onClick={() =>
+              setSelected(
+                selected.size === open.length ? new Set() : new Set(open.map((i) => i.id))
+              )
+            }
+          >
+            {selected.size === open.length ? 'clear selection' : 'select all'}
+          </button>
+          <Button
+            variant="primary"
+            disabled={!canSend || selected.size === 0}
+            onClick={send}
+            title={
+              canSend
+                ? issue.phase === 'plan_ready'
+                  ? 'Updates the plan to satisfy the selected feedback'
+                  : 'Runs an agent session to implement the selected feedback'
+                : busy
+                  ? 'An agent session is already running for this ticket'
+                  : 'Available once the ticket has a plan (Plan ready) or is In review'
+            }
+          >
+            <ThumbsUp size={11} /> Send to agent ({selected.size})
+          </Button>
+        </div>
+      )}
+    </div>
+  )
+}
+
+/**
  * Read-only view of the ticket itself — description, state, repo, PR — opened
  * by clicking anywhere on a board card. Actions stay in the card's "…" menu.
  */
@@ -1088,7 +1479,7 @@ function TicketDetailsDialog({
       onClose={onClose}
     >
       <header className="hairline flex flex-col gap-3 border-b px-6 py-4">
-        <div>
+        <div className="selectable">
           <p className="font-mono text-[11px] uppercase tracking-[0.18em] text-brass-400">
             ticket details
           </p>
@@ -1107,17 +1498,17 @@ function TicketDetailsDialog({
         </div>
       </header>
 
-      {/* one row: ticket metadata left, spend/recency + terminal toggle right */}
+      {/* one row: ticket metadata left, spend/recency right */}
       <div className="hairline flex flex-wrap items-center gap-2 border-b px-6 py-2.5">
-        <span className="rounded bg-ink-700 px-1.5 py-px font-mono text-[10.5px] text-ink-200">
+        <span className="selectable rounded bg-ink-700 px-1.5 py-px font-mono text-[10.5px] text-ink-200">
           {issue.stateName}
         </span>
         {repoName && (
-          <span className="rounded bg-ink-700 px-1.5 py-px font-mono text-[10.5px] text-ink-200">
+          <span className="selectable rounded bg-ink-700 px-1.5 py-px font-mono text-[10.5px] text-ink-200">
             {repoName}
           </span>
         )}
-        <span className="font-mono text-[10.5px] text-ink-400">{issue.branchName}</span>
+        <span className="selectable font-mono text-[10.5px] text-ink-400">{issue.branchName}</span>
         <span className="ml-auto flex items-center gap-2 font-mono text-[10.5px] text-ink-400">
           {typeof issue.costUsd === 'number' && issue.costUsd >= 0.01 && (
             <span title="Total AI spend across this ticket's sessions">
@@ -1126,14 +1517,6 @@ function TicketDetailsDialog({
           )}
           {timeAgo(issue.updatedAt)}
         </span>
-        {issue.repoPath && (
-          <Button
-            onClick={() => setTermOpen(!termOpen)}
-            title={termOpen ? 'Hide the agent terminal' : 'Show the agent terminal'}
-          >
-            <SquareTerminal size={12} /> {termOpen ? 'Hide terminal' : 'Terminal'}
-          </Button>
-        )}
       </div>
 
       <BrowserDock url={browserUrl} onClose={() => setBrowserUrl(null)}>
@@ -1154,11 +1537,24 @@ function TicketDetailsDialog({
               issueId={issue.issueId}
               onOpenLink={setBrowserUrl}
             />
+            <FigmaComments
+              key={`figma-${issue.issueId}`}
+              issue={issue}
+              onOpenLink={setBrowserUrl}
+            />
           </div>
         </TerminalDock>
       </BrowserDock>
 
       <footer className="hairline flex items-center justify-end gap-2 border-t px-6 py-3.5">
+        {issue.repoPath && (
+          <Button
+            onClick={() => setTermOpen(!termOpen)}
+            title={termOpen ? 'Hide the agent terminal' : 'Show the agent terminal'}
+          >
+            <SquareTerminal size={12} /> {termOpen ? 'Hide terminal' : 'Terminal'}
+          </Button>
+        )}
         <Button onClick={onClose}>Close</Button>
         <CommitPushButton issue={issue} localChanges={localChanges} />
         {issue.prUrl && (
@@ -1307,6 +1703,9 @@ function IssueCard({
   const repoName = issue.repoPath?.split('/').pop()
   const localChanges = useLocalChanges(issue)
   const lastAgentMsg = [...(issue.chat ?? [])].reverse().find((m) => m.role === 'agent')
+  const figmaOpen = (issue.figmaComments ?? []).filter(
+    (c) => !c.addressedAt && !c.resolvedAt
+  ).length
   const [menuOpen, setMenuOpen] = useState(false)
   const [errorExpanded, setErrorExpanded] = useState(false)
   const [copied, setCopied] = useState(false)
@@ -1372,57 +1771,66 @@ function IssueCard({
 
       <p className="mt-1.5 line-clamp-2 text-[13px] leading-snug text-ink-50">{issue.title}</p>
 
-      {issue.prUrl &&
-        ((issue.ciStatus && issue.ciStatus.state !== 'none') ||
-          (issue.prReview && issue.prReview !== 'none')) && (
-          <div className="mt-2 flex flex-wrap items-center gap-1.5">
-            {issue.ciStatus && issue.ciStatus.state !== 'none' && (
-              <span
-                className={cn(
-                  'whitespace-nowrap rounded px-1.5 py-px font-mono text-[10px]',
-                  issue.ciStatus.state === 'fail' && 'bg-terra-500/15 text-terra-400',
-                  issue.ciStatus.state === 'pending' && 'bg-ink-700 text-ink-300',
-                  issue.ciStatus.state === 'pass' && 'bg-sage-500/15 text-sage-400'
-                )}
-                title={
-                  issue.ciStatus.state === 'fail'
-                    ? `Failing: ${issue.ciStatus.failed.join(', ')}${issue.ciFixAttemptShas?.length ? ` — ${issue.ciFixAttemptShas.length} auto-fix attempt${issue.ciFixAttemptShas.length === 1 ? '' : 's'}` : ''}`
-                    : `Checks ${issue.ciStatus.state === 'pass' ? 'passing' : 'running'} (${timeAgo(issue.ciStatus.checkedAt)})`
-                }
-              >
-                {issue.ciStatus.state === 'fail'
-                  ? '✕'
-                  : issue.ciStatus.state === 'pending'
-                    ? '●'
-                    : '✓'}{' '}
-                CI
-              </span>
-            )}
-            {issue.prReview && issue.prReview !== 'none' && (
-              <span
-                className={cn(
-                  'whitespace-nowrap rounded px-1.5 py-px font-mono text-[10px]',
-                  issue.prReview === 'approved' && 'bg-sage-500/15 text-sage-400',
-                  issue.prReview === 'changes_requested' && 'bg-terra-500/15 text-terra-400',
-                  issue.prReview === 'review_required' && 'bg-ink-700 text-ink-300'
-                )}
-                title={
-                  issue.prReview === 'approved'
-                    ? 'PR approved'
-                    : issue.prReview === 'changes_requested'
-                      ? 'A reviewer requested changes'
-                      : 'PR awaiting review'
-                }
-              >
-                {issue.prReview === 'approved'
-                  ? '✓ approved'
+      {(figmaOpen > 0 ||
+        (issue.prUrl &&
+          ((issue.ciStatus && issue.ciStatus.state !== 'none') ||
+            (issue.prReview && issue.prReview !== 'none')))) && (
+        <div className="mt-2 flex flex-wrap items-center gap-1.5">
+          {issue.prUrl && issue.ciStatus && issue.ciStatus.state !== 'none' && (
+            <span
+              className={cn(
+                'whitespace-nowrap rounded px-1.5 py-px font-mono text-[10px]',
+                issue.ciStatus.state === 'fail' && 'bg-terra-500/15 text-terra-400',
+                issue.ciStatus.state === 'pending' && 'bg-ink-700 text-ink-300',
+                issue.ciStatus.state === 'pass' && 'bg-sage-500/15 text-sage-400'
+              )}
+              title={
+                issue.ciStatus.state === 'fail'
+                  ? `Failing: ${issue.ciStatus.failed.join(', ')}${issue.ciFixAttemptShas?.length ? ` — ${issue.ciFixAttemptShas.length} auto-fix attempt${issue.ciFixAttemptShas.length === 1 ? '' : 's'}` : ''}`
+                  : `Checks ${issue.ciStatus.state === 'pass' ? 'passing' : 'running'} (${timeAgo(issue.ciStatus.checkedAt)})`
+              }
+            >
+              {issue.ciStatus.state === 'fail'
+                ? '✕'
+                : issue.ciStatus.state === 'pending'
+                  ? '●'
+                  : '✓'}{' '}
+              CI
+            </span>
+          )}
+          {issue.prUrl && issue.prReview && issue.prReview !== 'none' && (
+            <span
+              className={cn(
+                'whitespace-nowrap rounded px-1.5 py-px font-mono text-[10px]',
+                issue.prReview === 'approved' && 'bg-sage-500/15 text-sage-400',
+                issue.prReview === 'changes_requested' && 'bg-terra-500/15 text-terra-400',
+                issue.prReview === 'review_required' && 'bg-ink-700 text-ink-300'
+              )}
+              title={
+                issue.prReview === 'approved'
+                  ? 'PR approved'
                   : issue.prReview === 'changes_requested'
-                    ? '± changes'
-                    : '○ review'}
-              </span>
-            )}
-          </div>
-        )}
+                    ? 'A reviewer requested changes'
+                    : 'PR awaiting review'
+              }
+            >
+              {issue.prReview === 'approved'
+                ? '✓ approved'
+                : issue.prReview === 'changes_requested'
+                  ? '± changes'
+                  : '○ review'}
+            </span>
+          )}
+          {figmaOpen > 0 && (
+            <span
+              className="whitespace-nowrap rounded bg-plan-400/15 px-1.5 py-px font-mono text-[10px] text-plan-400"
+              title={`${figmaOpen} open Figma design comment${figmaOpen === 1 ? '' : 's'} — open the ticket to review`}
+            >
+              ◆ figma {figmaOpen}
+            </span>
+          )}
+        </div>
+      )}
 
       {running && session?.lastText && (
         <p className="mt-2 line-clamp-2 font-mono text-[10.5px] leading-relaxed text-ink-300">
@@ -1508,7 +1916,7 @@ function IssueCard({
             <CircleHelp size={10} /> has questions
           </span>
         )}
-        <div className="ml-auto flex items-center gap-1">
+        <div className="ml-auto flex min-w-0 flex-wrap items-center justify-end gap-1">
           {running && session && (
             <Button
               variant="danger"
@@ -1753,14 +2161,27 @@ function DeployDialog({ onClose }: { onClose: () => void }): ReactElement {
 }
 
 export default function BoardView(): ReactElement {
-  const { issues, sessions, settings, devServers, deploys, detailsIssueId, setDetailsIssue } =
-    useApp()
+  const {
+    issues,
+    sessions,
+    settings,
+    devServers,
+    deploys,
+    detailsIssueId,
+    setDetailsIssue,
+    logSessionId,
+    logView,
+    openLog,
+    closeLog,
+    repromptIssueId,
+    setRepromptIssue
+  } = useApp()
   // the open ticket-details panel lives in the store so it survives view switches
   const detailsFor = detailsIssueId ? (issues[detailsIssueId] ?? null) : null
+  // likewise the "chat with the agent" panel, so it comes back on return
+  const repromptFor = repromptIssueId ? (issues[repromptIssueId] ?? null) : null
   const [planFor, setPlanFor] = useState<TrackedIssue | null>(null)
   const [questionsFor, setQuestionsFor] = useState<TrackedIssue | null>(null)
-  const [logFor, setLogFor] = useState<Session | null>(null)
-  const [repromptFor, setRepromptFor] = useState<TrackedIssue | null>(null)
   const [ghReviewFor, setGhReviewFor] = useState<TrackedIssue | null>(null)
   const [deployOpen, setDeployOpen] = useState(false)
   const [newTicketOpen, setNewTicketOpen] = useState(false)
@@ -1888,9 +2309,9 @@ export default function BoardView(): ReactElement {
                   onViewPlan={() => setPlanFor(issue)}
                   onViewLog={() => {
                     const s = sessionFor(issue)
-                    if (s) setLogFor(s)
+                    if (s) openLog(s.id)
                   }}
-                  onReprompt={() => setRepromptFor(issue)}
+                  onReprompt={() => setRepromptIssue(issue.issueId)}
                   onViewGhReview={() => setGhReviewFor(issue)}
                   onAnswerQuestions={() => setQuestionsFor(issue)}
                 />
@@ -1953,9 +2374,9 @@ export default function BoardView(): ReactElement {
                         onViewPlan={() => setPlanFor(issue)}
                         onViewLog={() => {
                           const s = sessionFor(issue)
-                          if (s) setLogFor(s)
+                          if (s) openLog(s.id)
                         }}
-                        onReprompt={() => setRepromptFor(issue)}
+                        onReprompt={() => setRepromptIssue(issue.issueId)}
                         onViewGhReview={() => setGhReviewFor(issue)}
                         onAnswerQuestions={() => setQuestionsFor(issue)}
                       />
@@ -1984,9 +2405,9 @@ export default function BoardView(): ReactElement {
           onViewPlan={() => setPlanFor(detailsFor)}
           onViewLog={() => {
             const s = sessionFor(detailsFor)
-            if (s) setLogFor(s)
+            if (s) openLog(s.id)
           }}
-          onReprompt={() => setRepromptFor(detailsFor)}
+          onReprompt={() => setRepromptIssue(detailsFor.issueId)}
           onClose={() => setDetailsIssue(null)}
         />
       )}
@@ -1999,19 +2420,16 @@ export default function BoardView(): ReactElement {
           onClose={() => setQuestionsFor(null)}
         />
       )}
-      {repromptFor && (
-        <RepromptDialog
-          issue={issues[repromptFor.issueId] ?? repromptFor}
-          onClose={() => setRepromptFor(null)}
-        />
-      )}
+      {repromptFor && <RepromptDialog issue={repromptFor} onClose={() => setRepromptIssue(null)} />}
       {ghReviewFor && (
         <GhReviewDialog
           issue={issues[ghReviewFor.issueId] ?? ghReviewFor}
           onClose={() => setGhReviewFor(null)}
         />
       )}
-      {logFor && <LogViewer session={logFor} onClose={() => setLogFor(null)} />}
+      {logView === 'board' && logSessionId && sessions[logSessionId] && (
+        <LogViewer session={sessions[logSessionId]} onClose={closeLog} />
+      )}
       {deployOpen && <DeployDialog onClose={() => setDeployOpen(false)} />}
       {newTicketOpen && <NewTicketDialog onClose={() => setNewTicketOpen(false)} />}
     </div>

@@ -179,6 +179,20 @@ export function registerIpc(): void {
   ipcMain.handle(IPC.issueAddressGhComments, (_e, issueId: string, itemIds: string[]) =>
     orchestrator.addressGhComments(issueId, itemIds)
   )
+  ipcMain.handle(IPC.figmaRefreshComments, (_e, issueId: string) =>
+    orchestrator.refreshFigmaComments(issueId)
+  )
+  ipcMain.handle(IPC.figmaSetLink, (_e, issueId: string, url: string) =>
+    orchestrator.setFigmaLink(issueId, url)
+  )
+  ipcMain.handle(
+    IPC.figmaMarkAddressed,
+    (_e, issueId: string, commentIds: string[], addressed: boolean) =>
+      orchestrator.markFigmaAddressed(issueId, commentIds, addressed)
+  )
+  ipcMain.handle(IPC.figmaAddressComments, (_e, issueId: string, commentIds: string[]) =>
+    orchestrator.addressFigmaComments(issueId, commentIds)
+  )
   ipcMain.handle(IPC.issueRetry, (_e, issueId: string) => orchestrator.retry(issueId))
   ipcMain.handle(IPC.issueLocalChanges, (_e, issueId: string) => {
     const issue = orchestrator.issues().find((i) => i.issueId === issueId)

@@ -123,10 +123,22 @@ interface AppState {
   detailsIssueId: string | null
   /** the details panel's agent-terminal pane is showing */
   detailsTermOpen: boolean
+  /** session whose log/terminal panel is open, and the view it was opened from
+      — kept here (not in the view) so the panel survives switching views and
+      reappears on the originating view, not on its siblings */
+  logSessionId: string | null
+  logView: View | null
+  /** issue whose "chat with the agent" panel is open — kept here (a board-only
+      panel) so it survives switching views and comes back on return */
+  repromptIssueId: string | null
 
   setView: (v: View) => void
   setDetailsIssue: (issueId: string | null) => void
   setDetailsTermOpen: (open: boolean) => void
+  setRepromptIssue: (issueId: string | null) => void
+  /** open a session's log panel, owned by the current view */
+  openLog: (sessionId: string) => void
+  closeLog: () => void
   toggleSidebar: () => void
   setShortcutsOpen: (open: boolean) => void
   /** expand a surface to full screen, or restore when passed null */
@@ -182,6 +194,9 @@ export const useApp = create<AppState>((set, get) => ({
   fullscreen: null,
   detailsIssueId: null,
   detailsTermOpen: false,
+  logSessionId: null,
+  logView: null,
+  repromptIssueId: null,
 
   // terminal full screen is tied to the terminal view; leaving the view exits
   // it so the user isn't stranded with the chrome hidden and no exit button
@@ -197,6 +212,11 @@ export const useApp = create<AppState>((set, get) => ({
     })),
 
   setDetailsTermOpen: (detailsTermOpen) => set({ detailsTermOpen }),
+
+  setRepromptIssue: (repromptIssueId) => set({ repromptIssueId }),
+
+  openLog: (sessionId) => set((st) => ({ logSessionId: sessionId, logView: st.view })),
+  closeLog: () => set({ logSessionId: null, logView: null }),
 
   toggleSidebar: () =>
     set((st) => {

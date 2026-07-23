@@ -48,8 +48,10 @@ function ErrorRow({
         >
           {issue.type}
         </button>
-        <p className="mt-0.5 truncate text-[12px] text-ink-300">{issue.message || 'no message'}</p>
-        <p className="mt-0.5 font-mono text-[10.5px] text-ink-400">
+        <p className="selectable mt-0.5 truncate text-[12px] text-ink-300">
+          {issue.message || 'no message'}
+        </p>
+        <p className="selectable mt-0.5 font-mono text-[10.5px] text-ink-400">
           first seen {when(issue.firstSeen)} · last seen {when(issue.lastSeen)}
           {session && !investigating && (
             <span className={cn('ml-1.5', statusColor[session.status])}>
@@ -105,14 +107,23 @@ function errKey(issue: ErrorTrackingIssue): string {
 }
 
 export default function ErrorsView(): ReactElement {
-  const { settings, credentials, setView, sessions, pushToast } = useApp()
+  const {
+    settings,
+    credentials,
+    setView,
+    sessions,
+    pushToast,
+    logSessionId,
+    logView,
+    openLog,
+    closeLog
+  } = useApp()
   const [source, setSource] = useState<ErrorSource>('frontend')
   const [days, setDays] = useState(7)
   const [result, setResult] = useState<FetchResult | null>(null)
   const [refreshSeq, setRefreshSeq] = useState(0)
   // error key -> spawned investigation session id (this app run only)
   const [investigations, setInvestigations] = useState<Record<string, string>>({})
-  const [logSessionId, setLogSessionId] = useState<string | null>(null)
 
   const keySet = credentials?.posthogKeySet ?? false
   const cfg = settings?.errorTracking
@@ -161,7 +172,7 @@ export default function ErrorsView(): ReactElement {
     }
   }
 
-  const logSession = logSessionId ? sessions[logSessionId] : null
+  const logSession = logView === 'errors' && logSessionId ? sessions[logSessionId] : null
 
   return (
     <div className="fade-up">
@@ -260,14 +271,14 @@ export default function ErrorsView(): ReactElement {
                 issue={i}
                 session={sessionId ? sessions[sessionId] : undefined}
                 onInvestigate={() => void investigate(i)}
-                onLog={() => setLogSessionId(sessionId ?? null)}
+                onLog={() => sessionId && openLog(sessionId)}
               />
             )
           })}
         </div>
       )}
 
-      {logSession && <LogViewer session={logSession} onClose={() => setLogSessionId(null)} />}
+      {logSession && <LogViewer session={logSession} onClose={closeLog} />}
     </div>
   )
 }

@@ -1,4 +1,4 @@
-import { useMemo, useState, type ReactElement } from 'react'
+import { useMemo, type ReactElement } from 'react'
 import { ScrollText, Square } from 'lucide-react'
 import type { Session } from '@shared/types'
 import { call, sessionList, useApp } from '../store'
@@ -42,7 +42,7 @@ function SessionRow({ session, onOpen }: { session: Session; onOpen: () => void 
         )}
       </div>
 
-      <div className="min-w-0 flex-1">
+      <div className="selectable min-w-0 flex-1">
         <div className="flex items-baseline gap-2">
           <span className="text-[13px] font-bold text-ink-50">
             {session.issueIdentifier ??
@@ -100,7 +100,10 @@ function SessionRow({ session, onOpen }: { session: Session; onOpen: () => void 
 
 export default function SessionsView(): ReactElement {
   const sessions = useApp((s) => s.sessions)
-  const [open, setOpen] = useState<Session | null>(null)
+  const logSessionId = useApp((s) => s.logSessionId)
+  const logView = useApp((s) => s.logView)
+  const openLog = useApp((s) => s.openLog)
+  const closeLog = useApp((s) => s.closeLog)
   const list = useMemo(() => sessionList(sessions), [sessions])
   const running = list.filter((s) => s.status === 'running' || s.status === 'orphaned')
   const past = list.filter((s) => s.status !== 'running' && s.status !== 'orphaned')
@@ -127,7 +130,7 @@ export default function SessionsView(): ReactElement {
             running ({running.length})
           </h2>
           {running.map((s) => (
-            <SessionRow key={s.id} session={s} onOpen={() => setOpen(s)} />
+            <SessionRow key={s.id} session={s} onOpen={() => openLog(s.id)} />
           ))}
         </div>
       )}
@@ -138,12 +141,14 @@ export default function SessionsView(): ReactElement {
             history
           </h2>
           {past.slice(0, 50).map((s) => (
-            <SessionRow key={s.id} session={s} onOpen={() => setOpen(s)} />
+            <SessionRow key={s.id} session={s} onOpen={() => openLog(s.id)} />
           ))}
         </div>
       )}
 
-      {open && <LogViewer session={open} onClose={() => setOpen(null)} />}
+      {logView === 'sessions' && logSessionId && sessions[logSessionId] && (
+        <LogViewer session={sessions[logSessionId]} onClose={closeLog} />
+      )}
     </div>
   )
 }

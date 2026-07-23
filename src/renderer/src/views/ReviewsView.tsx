@@ -40,7 +40,7 @@ function ReviewRow({ review, onLog }: { review: ActiveReview; onLog: () => void 
             {review.title}
           </button>
         </div>
-        <p className="mt-0.5 font-mono text-[10.5px] text-ink-400">
+        <p className="selectable mt-0.5 font-mono text-[10.5px] text-ink-400">
           {review.repository} #{review.number} · by {review.author} · {timeAgo(review.startedAt)}
           {review.error ? ` · ${review.error}` : ''}
         </p>

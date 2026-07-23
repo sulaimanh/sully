@@ -5,6 +5,7 @@ import * as path from 'path'
 import type {
   BoardColumn,
   ColumnMapping,
+  FigmaCommentItem,
   GhReviewItem,
   PhaseConfig,
   PlanQuestion,
@@ -47,6 +48,7 @@ import {
   prReviewComments,
   updatePrBranch
 } from '../github/gh'
+import { fetchFigmaComments, fetchNodeSubtreeIds, parseFigmaLinks } from '../figma/comments'
 
 const PLAN_MARKER = (issueId: string): string => `<!-- sully:plan issueId=${issueId} v=1 -->`
 // plan comments posted before the conductor→sully rename must stay recognized
@@ -391,6 +393,16 @@ export class Orchestrator extends EventEmitter {
     // worktree exists the repo is locked in
     const resolved = this.repoPathFor(node)
     local.repoPath = !local.worktreePath && resolved ? resolved : (local.repoPath ?? resolved)
+
+    // design-feedback refresh is read-only (like the CI status), so it runs
+    // even while a session is busy — but a Figma outage never fails a ticket
+    if (column !== 'uncategorized') {
+      try {
+        await this.refreshFigma(local)
+      } catch {
+        /* non-fatal */
+      }
+    }
 
     if (local.activeSessionId) {
       this.save(local)
@@ -1217,6 +1229,208 @@ export class Orchestrator extends EventEmitter {
     this.save(issue)
     // dedicated phase config — its model wins, no feedbackModel swap
     await this.startReprompt(issue, [prompt], settingsStore.get().phases.addressComments)
+    // mark after a successful dispatch so a failed spawn leaves them actionable
+    const at = new Date().toISOString()
+    for (const i of items) i.addressedAt = at
+    this.save(issue)
+  }
+
+  /**
+   * Refresh the ticket's linked Figma files and their comments (the "Design
+   * feedback" section). Description links are re-parsed every call; links
+   * found in Linear comments are only discovered when rescanComments is set
+   * (dialog open / refresh button) but persist once found. Comment fetches
+   * share a per-file TTL cache, so many tickets on one file cost one request.
+   */
+  private async refreshFigma(
+    issue: TrackedIssue,
+    opts?: { rescanComments?: boolean; force?: boolean }
+  ): Promise<void> {
+    // a manually set link overrides auto-detection entirely — the user pointed
+    // the ticket at a specific file, so don't mix in detected ones
+    const manual = (issue.figmaLinks ?? []).filter((l) => l.source === 'manual')
+    const links =
+      manual.length > 0 ? manual : parseFigmaLinks(issue.description ?? '', 'description')
+    const have = new Set(links.map((l) => l.fileKey))
+    if (manual.length === 0) {
+      for (const l of issue.figmaLinks ?? []) {
+        if (l.source === 'comment' && !have.has(l.fileKey)) {
+          links.push(l)
+          have.add(l.fileKey)
+        }
+      }
+      if (opts?.rescanComments) {
+        const comments = await fetchIssueComments(issue.issueId)
+        for (const c of comments) {
+          for (const l of parseFigmaLinks(c.body, 'comment')) {
+            if (!have.has(l.fileKey)) {
+              links.push(l)
+              have.add(l.fileKey)
+            }
+          }
+        }
+      }
+    }
+
+    let changed = JSON.stringify(links) !== JSON.stringify(issue.figmaLinks ?? [])
+    if (changed) issue.figmaLinks = links.length > 0 ? links : undefined
+
+    if (links.length === 0) {
+      if (issue.figmaComments) {
+        issue.figmaComments = undefined
+        changed = true
+      }
+      if (changed) this.save(issue)
+      return
+    }
+
+    const prev = new Map((issue.figmaComments ?? []).map((i) => [i.id, i]))
+    const merged: FigmaCommentItem[] = []
+    for (const link of links) {
+      let fetched = await fetchFigmaComments(link.fileKey, opts?.force)
+      if (!fetched) {
+        // failed fetch keeps this file's last known items
+        merged.push(...(issue.figmaComments ?? []).filter((i) => i.fileKey === link.fileKey))
+        continue
+      }
+      // the comments endpoint is file-wide — when the link points at a node,
+      // keep only comments pinned inside that node's subtree. A failed subtree
+      // fetch falls back to the unfiltered list rather than showing nothing.
+      if (link.nodeId) {
+        const subtree = await fetchNodeSubtreeIds(link.fileKey, link.nodeId, opts?.force)
+        if (subtree) fetched = fetched.filter((c) => c.nodeId && subtree.has(c.nodeId))
+      }
+      // carry addressed marks across refetches; a changed message (new thread
+      // reply) drops the mark so the comment becomes actionable again
+      for (const c of fetched) {
+        const old = prev.get(c.id)
+        merged.push(
+          old?.addressedAt && old.message === c.message ? { ...c, addressedAt: old.addressedAt } : c
+        )
+      }
+    }
+    if (JSON.stringify(merged) !== JSON.stringify(issue.figmaComments ?? [])) {
+      issue.figmaComments = merged.length > 0 ? merged : undefined
+      changed = true
+    }
+    // save only on meaningful change — every save rewrites state.json and
+    // pings the renderer
+    if (changed) this.save(issue)
+  }
+
+  /**
+   * Manually point the ticket's design feedback at a Figma file — overrides
+   * the links auto-detected in the description/comments. An empty url clears
+   * the override and reverts to auto-detection.
+   */
+  async setFigmaLink(issueId: string, url: string): Promise<void> {
+    const issue = this.store.get(issueId)
+    if (!issue) return
+    const trimmed = url.trim()
+    if (trimmed) {
+      const parsed = parseFigmaLinks(trimmed, 'manual')
+      if (parsed.length === 0) {
+        throw new Error('Not a Figma file URL — expected https://www.figma.com/design/…')
+      }
+      issue.figmaLinks = parsed
+    } else {
+      const kept = (issue.figmaLinks ?? []).filter((l) => l.source !== 'manual')
+      issue.figmaLinks = kept.length > 0 ? kept : undefined
+    }
+    // drop comments from files no longer linked; keeping the rest preserves
+    // their addressedAt marks when the same file stays linked
+    const keys = new Set((issue.figmaLinks ?? []).map((l) => l.fileKey))
+    const kept = (issue.figmaComments ?? []).filter((c) => keys.has(c.fileKey))
+    issue.figmaComments = kept.length > 0 ? kept : undefined
+    this.save(issue)
+    await this.refreshFigma(issue, { rescanComments: !trimmed, force: true })
+  }
+
+  /** "Design feedback" opened or refreshed: full rescan (description + Linear comments), fresh fetch. */
+  async refreshFigmaComments(issueId: string): Promise<FigmaCommentItem[]> {
+    const issue = this.store.get(issueId)
+    if (!issue) return []
+    await this.refreshFigma(issue, { rescanComments: true, force: true })
+    return issue.figmaComments ?? []
+  }
+
+  /** "Mark addressed" / undo — purely local; Figma's REST API has no resolve endpoint. */
+  markFigmaAddressed(issueId: string, commentIds: string[], addressed: boolean): void {
+    const issue = this.store.get(issueId)
+    if (!issue) return
+    const at = new Date().toISOString()
+    let changed = false
+    for (const item of issue.figmaComments ?? []) {
+      if (!commentIds.includes(item.id)) continue
+      const next = addressed ? at : undefined
+      if (item.addressedAt !== next) {
+        item.addressedAt = next
+        changed = true
+      }
+    }
+    if (changed) this.save(issue)
+  }
+
+  /**
+   * User picked design comments in the "Design feedback" section and clicked
+   * "Send to agent". In review this runs the usual address-comments reprompt;
+   * on a ready plan it lands as plan feedback so the plan absorbs the design
+   * changes before coding starts.
+   */
+  async addressFigmaComments(issueId: string, commentIds: string[]): Promise<void> {
+    const issue = this.store.get(issueId)
+    if (!issue || issue.activeSessionId || !issue.repoPath) return
+    if (issue.phase !== 'in_review' && issue.phase !== 'plan_ready') return
+    // addressed/resolved items are display-only — never re-dispatch them
+    const items = (issue.figmaComments ?? []).filter(
+      (i) => commentIds.includes(i.id) && !i.addressedAt && !i.resolvedAt
+    )
+    if (items.length === 0) return
+
+    const linkByKey = new Map((issue.figmaLinks ?? []).map((l) => [l.fileKey, l]))
+    const fileLines = [...new Set(items.map((i) => i.fileKey))].map(
+      (k) => `Figma file: ${linkByKey.get(k)?.url ?? `https://www.figma.com/design/${k}`}`
+    )
+    const blocks = items.map((i) => {
+      const meta = [
+        i.orderId && `pin #${i.orderId}`,
+        i.author && `by ${i.author}`,
+        i.createdAt && i.createdAt.slice(0, 10)
+      ]
+        .filter(Boolean)
+        .join(' — ')
+      const node =
+        i.nodeId &&
+        `node ${i.nodeId} — https://www.figma.com/design/${i.fileKey}?node-id=${i.nodeId.replace(':', '-')}`
+      return [meta, node, `"""\n${i.message}\n"""`].filter(Boolean).join('\n')
+    })
+    const n = items.length
+    // phases.figmaComments defaults to mcp off, but spawnEnv exports
+    // FIGMA_TOKEN, so the agent can hit the REST API for node details
+    const tail =
+      issue.phase === 'in_review'
+        ? 'These are reviewer comments on the Figma design this ticket implements. Compare the current implementation against each piece of feedback and change the code to match the requested design. The FIGMA_TOKEN env var is set — if you need node details, call the Figma REST API (e.g. `curl -H "X-Figma-Token: $FIGMA_TOKEN" "https://api.figma.com/v1/files/<file-key>/nodes?ids=<node-id>"`). If a comment needs no code change or is out of scope for this ticket, say so in your reply and change nothing for it.'
+        : 'These are reviewer comments on the Figma design this ticket implements. Update the plan so the implementation will satisfy each piece of feedback — do NOT implement anything yet. If a comment is out of scope for this ticket, note that in your reply instead.'
+    const prompt = [
+      `Address ${n === 1 ? 'this design comment' : `these ${n} design comments`} from the Figma review of this ticket's design:`,
+      ...fileLines,
+      ...blocks,
+      tail
+    ].join('\n\n')
+
+    const labels = items.map((i) => (i.orderId ? `#${i.orderId}` : (i.author ?? 'comment')))
+    const verb = issue.phase === 'in_review' ? 'Address' : 'Update the plan for'
+    this.appendChat(
+      issue,
+      'user',
+      `${verb} ${n} Figma design comment${n === 1 ? '' : 's'}: ${labels.join(', ')}`
+    )
+    this.save(issue)
+    if (issue.phase === 'in_review') {
+      await this.startReprompt(issue, [prompt], settingsStore.get().phases.figmaComments)
+    } else {
+      await this.startPlanFeedback(issue, [prompt])
+    }
     // mark after a successful dispatch so a failed spawn leaves them actionable
     const at = new Date().toISOString()
     for (const i of items) i.addressedAt = at

@@ -6,6 +6,7 @@ export type PhaseKey =
   | 'createPr'
   | 'commitPush'
   | 'addressComments'
+  | 'figmaComments'
   | 'prReview'
   | 'errorInvestigation'
 
@@ -161,6 +162,40 @@ export interface GhReviewItem {
   addressedAt?: string
 }
 
+/** A Figma file linked from the ticket's description or Linear comments. */
+export interface FigmaLink {
+  fileKey: string
+  /** file name slug from the URL, for display */
+  fileName?: string
+  /** node-id query param, colon form ("12:345") */
+  nodeId?: string
+  url: string
+  /** where the link came from — polls re-scan 'description'; 'comment' links persist
+   *  once discovered; a 'manual' link overrides auto-detection entirely */
+  source: 'description' | 'comment' | 'manual'
+}
+
+/** One top-level Figma comment thread, individually addressable (mirrors GhReviewItem). */
+export interface FigmaCommentItem {
+  /** Figma comment id of the thread root — stable across refetches */
+  id: string
+  fileKey: string
+  /** commenter's Figma handle */
+  author?: string
+  /** root message with replies appended as "> handle: text" blockquotes */
+  message: string
+  createdAt?: string
+  /** resolved in Figma — hidden by default in the UI */
+  resolvedAt?: string
+  /** the visible pin number in Figma */
+  orderId?: string
+  /** node the pin is attached to (client_meta), colon form */
+  nodeId?: string
+  /** set when marked addressed locally or sent to an agent; a new reply in the
+   *  thread clears it (the flattened message changes on refetch) */
+  addressedAt?: string
+}
+
 export interface ChatMessage {
   role: 'user' | 'agent'
   text: string
@@ -189,6 +224,11 @@ export interface TrackedIssue {
   branchName: string
   stateId: string
   stateName: string
+  /**
+   * Lives only in Sully — no Linear issue behind it. url/teamId are empty and
+   * stateId holds a synthetic 'local:<BoardColumn>' token instead of a Linear state.
+   */
+  local?: boolean
   phase: IssuePhase
   repoPath?: string
   worktreePath?: string
@@ -209,6 +249,10 @@ export interface TrackedIssue {
   codingSessionId?: string
   /** Fetched GitHub PR review comments — rendered by the "View GitHub review" modal */
   ghReviewItems?: GhReviewItem[]
+  /** Figma files detected in the description / Linear comments */
+  figmaLinks?: FigmaLink[]
+  /** Fetched Figma comments for those files — rendered in the "Design feedback" section */
+  figmaComments?: FigmaCommentItem[]
   /** In-app conversation with the agent (plan feedback + reprompts) — never posted to Linear */
   chat?: ChatMessage[]
   /** claude conversation to --resume for chat follow-ups, so context isn't re-explored each turn */
@@ -315,6 +359,7 @@ export interface PhaseSettings {
   createPr: PhaseConfig
   commitPush: PhaseConfig
   addressComments: PhaseConfig
+  figmaComments: PhaseConfig
   prReview: PhaseConfig
   errorInvestigation: PhaseConfig
 }
@@ -548,6 +593,16 @@ export function defaultPhaseSettings(): PhaseSettings {
       mcp: false
     },
     addressComments: {
+      agent: 'claude',
+      model: 'opus',
+      permissionMode: 'bypass',
+      timeoutMs: 90 * 60_000,
+      mcp: false
+    },
+    // no MCP by default — the prompt carries the comments and FIGMA_TOKEN is
+    // in the session env for REST calls; enable the Figma MCP here to give
+    // these sessions design context/screenshots
+    figmaComments: {
       agent: 'claude',
       model: 'opus',
       permissionMode: 'bypass',

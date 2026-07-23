@@ -14,6 +14,7 @@ import type {
   DoctorReport,
   ErrorSource,
   ErrorTrackingIssue,
+  FigmaCommentItem,
   IssueComment,
   IssueCreateMeta,
   LinearTeam,
@@ -77,6 +78,14 @@ const api = {
     ipcRenderer.invoke(IPC.issueReprompt, issueId, prompt),
   addressGhComments: (issueId: string, itemIds: string[]): Promise<void> =>
     ipcRenderer.invoke(IPC.issueAddressGhComments, issueId, itemIds),
+  figmaRefreshComments: (issueId: string): Promise<FigmaCommentItem[]> =>
+    ipcRenderer.invoke(IPC.figmaRefreshComments, issueId),
+  figmaSetLink: (issueId: string, url: string): Promise<void> =>
+    ipcRenderer.invoke(IPC.figmaSetLink, issueId, url),
+  figmaMarkAddressed: (issueId: string, commentIds: string[], addressed: boolean): Promise<void> =>
+    ipcRenderer.invoke(IPC.figmaMarkAddressed, issueId, commentIds, addressed),
+  figmaAddressComments: (issueId: string, commentIds: string[]): Promise<void> =>
+    ipcRenderer.invoke(IPC.figmaAddressComments, issueId, commentIds),
   retryIssue: (issueId: string): Promise<void> => ipcRenderer.invoke(IPC.issueRetry, issueId),
   issueLocalChanges: (issueId: string): Promise<number> =>
     ipcRenderer.invoke(IPC.issueLocalChanges, issueId),

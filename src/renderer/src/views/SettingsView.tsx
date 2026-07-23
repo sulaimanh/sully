@@ -589,6 +589,11 @@ const PHASES: Array<{ key: PhaseKey; title: string; blurb: string }> = [
     title: 'Address Comments',
     blurb: 'addresses GitHub review comments on the PR'
   },
+  {
+    key: 'figmaComments',
+    title: 'Figma Comments',
+    blurb: 'addresses design comments from the linked Figma file'
+  },
   { key: 'prReview', title: 'PR Review', blurb: 'reviews teammates’ PRs' },
   {
     key: 'errorInvestigation',
