@@ -4,6 +4,7 @@ import type {
   AppSettings,
   BoardColumn,
   CreateIssueInput,
+  CreateLocalIssueInput,
   CredentialStatus,
   ErrorSource,
   ErrorTrackingIssue,
@@ -20,7 +21,7 @@ import {
   setCredentials
 } from './credentials'
 import { fetchErrorIssues } from './posthog/errors'
-import { buildErrorInvestigationCommand } from './orchestrator/prompts'
+import { TICKET_FILE_REL, buildErrorInvestigationCommand } from './orchestrator/prompts'
 import { orchestrator, resumableSessionId } from './orchestrator/Orchestrator'
 import { binaryPath } from './env'
 import { ensureWorktree, installDeps, localChangesCount } from './orchestrator/worktrees'
@@ -56,7 +57,14 @@ async function resolveIssueWorktree(
       : await ensureWorktree(issue.repoPath, issue.branchName)
   // record it so the board sees the worktree exists and later opens skip setup
   orchestrator.noteWorktree(issueId, cwd)
+  // keep the worktree ticket file fresh — it's how terminal agents know the ticket
+  orchestrator.syncTicketFile(issueId)
   return { issue, cwd }
+}
+
+/** Single-quote shell escaping — ticket titles may hold $, backticks, quotes. */
+function shellQuote(s: string): string {
+  return `'${s.replace(/'/g, `'\\''`)}'`
 }
 
 function broadcast(channel: string, ...args: unknown[]): void {
@@ -203,6 +211,20 @@ export function registerIpc(): void {
   ipcMain.handle(IPC.issueMove, (_e, issueId: string, column: BoardColumn) =>
     orchestrator.moveToColumn(issueId, column)
   )
+  ipcMain.handle(IPC.issueCreateLocal, (_e, input: CreateLocalIssueInput) =>
+    orchestrator.createLocalIssue(input)
+  )
+  ipcMain.handle(
+    IPC.issueUpdateLocal,
+    (_e, issueId: string, patch: { title?: string; description?: string }) =>
+      orchestrator.updateLocalIssue(issueId, patch)
+  )
+  ipcMain.handle(IPC.issueDeleteLocal, (_e, issueId: string) =>
+    orchestrator.deleteLocalIssue(issueId)
+  )
+  ipcMain.handle(IPC.issueAttachPr, (_e, issueId: string, url: string) =>
+    orchestrator.attachPr(issueId, url)
+  )
 
   ipcMain.handle(IPC.sessionStop, async (_e, id: string) => {
     const session = processManager.get(id)
@@ -226,11 +248,22 @@ export function registerIpc(): void {
     const claude = binaryPath('claude') ?? 'claude'
     const resumeId = resumableSessionId(cwd, issue.chatSessionId)
     const bin = claude.includes(' ') ? JSON.stringify(claude) : claude
+    // interactive claude gets no per-session prompt, so the ticket context
+    // rides in as a system-prompt suffix — without it the agent has no idea
+    // what the ticket is (fatal for local tickets, which aren't in Linear)
+    const context = [
+      `You are working in the worktree for ticket ${issue.identifier} — ${issue.title}.`,
+      `Ticket details: ${TICKET_FILE_REL}.`,
+      issue.local
+        ? 'This ticket exists only in Sully (this desktop orchestrator app), not in Linear — never search Linear for it.'
+        : `Linear URL: ${issue.url}`
+    ].join(' ')
+    const ctx = ` --append-system-prompt ${shellQuote(context)}`
     return ptyManager.create(cwd, {
       issueId,
       kind: 'agent',
       title: `${issue.identifier} · claude`,
-      initialCommand: resumeId ? `${bin} --resume ${resumeId}` : bin
+      initialCommand: resumeId ? `${bin} --resume ${resumeId}${ctx}` : `${bin}${ctx}`
     })
   })
   // the "new ticket" dialog's terminal: plain interactive claude in the

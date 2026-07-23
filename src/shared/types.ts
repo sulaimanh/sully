@@ -272,6 +272,18 @@ export interface TrackedIssue {
   updatedAt: string
 }
 
+export function isLocalIssue(issue: Pick<TrackedIssue, 'local'>): boolean {
+  return issue.local === true
+}
+
+/** Input for creating a ticket that lives only in Sully (no Linear issue). */
+export interface CreateLocalIssueInput {
+  title: string
+  description?: string
+  /** RepoMapping id the ticket's worktree is cut from — required, no Linear routing to fall back on */
+  repoId: string
+}
+
 export interface DevServer {
   issueId: string
   identifier: string

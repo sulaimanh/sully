@@ -5,6 +5,7 @@ import type {
   AppSettings,
   BoardColumn,
   CreateIssueInput,
+  CreateLocalIssueInput,
   CreatedIssue,
   CredentialStatus,
   Deploy,
@@ -93,6 +94,16 @@ const api = {
     ipcRenderer.invoke(IPC.issueCommitPush, issueId),
   moveIssue: (issueId: string, column: BoardColumn): Promise<void> =>
     ipcRenderer.invoke(IPC.issueMove, issueId, column),
+  createLocalIssue: (input: CreateLocalIssueInput): Promise<TrackedIssue> =>
+    ipcRenderer.invoke(IPC.issueCreateLocal, input),
+  updateLocalIssue: (
+    issueId: string,
+    patch: { title?: string; description?: string }
+  ): Promise<void> => ipcRenderer.invoke(IPC.issueUpdateLocal, issueId, patch),
+  deleteLocalIssue: (issueId: string): Promise<void> =>
+    ipcRenderer.invoke(IPC.issueDeleteLocal, issueId),
+  attachPr: (issueId: string, url: string): Promise<void> =>
+    ipcRenderer.invoke(IPC.issueAttachPr, issueId, url),
   stopSession: (id: string): Promise<void> => ipcRenderer.invoke(IPC.sessionStop, id),
   readSessionLog: (id: string, fromByte: number): Promise<{ content: string; size: number }> =>
     ipcRenderer.invoke(IPC.sessionReadLog, id, fromByte),

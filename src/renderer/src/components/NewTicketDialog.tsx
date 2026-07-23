@@ -265,6 +265,10 @@ export default function NewTicketDialog({ onClose }: { onClose: () => void }): R
   const [repoId, setRepoId] = useState(repos[0]?.id ?? '')
   const [labelKeys, setLabelKeys] = useState<Set<string>>(new Set())
   const [creating, setCreating] = useState(false)
+  // local-only tickets live in Sully alone — no Linear issue is created, so
+  // the Linear-backed fields (team/status/priority/assignee/project/labels)
+  // don't apply and the target repo becomes required
+  const [localOnly, setLocalOnly] = useState(false)
 
   useEffect(() => {
     window.sully
@@ -322,29 +326,41 @@ export default function NewTicketDialog({ onClose }: { onClose: () => void }): R
       return next
     })
 
-  const canCreate = Boolean(meta && teamId && title.trim() && !creating)
+  const canCreate = localOnly
+    ? Boolean(title.trim() && repoId && !creating)
+    : Boolean(meta && teamId && title.trim() && !creating)
 
   const create = async (): Promise<void> => {
     if (!canCreate) return
-    const labelIds: string[] = []
-    const ensureLabelNames: string[] = []
-    for (const key of labelKeys) {
-      if (key.startsWith('new:')) ensureLabelNames.push(key.slice(4))
-      else labelIds.push(key)
-    }
-    const input: CreateIssueInput = {
-      teamId,
-      title: title.trim(),
-      description: description.trim() || undefined,
-      stateId: stateId || undefined,
-      assigneeId: assigneeId || undefined,
-      priority,
-      labelIds,
-      ensureLabelNames: ensureLabelNames.length > 0 ? ensureLabelNames : undefined,
-      projectId: projectId || undefined
-    }
     setCreating(true)
     try {
+      if (localOnly) {
+        const created = await window.sully.createLocalIssue({
+          title: title.trim(),
+          description: description.trim() || undefined,
+          repoId
+        })
+        useApp.getState().pushToast('success', `${created.identifier} created`)
+        onClose()
+        return
+      }
+      const labelIds: string[] = []
+      const ensureLabelNames: string[] = []
+      for (const key of labelKeys) {
+        if (key.startsWith('new:')) ensureLabelNames.push(key.slice(4))
+        else labelIds.push(key)
+      }
+      const input: CreateIssueInput = {
+        teamId,
+        title: title.trim(),
+        description: description.trim() || undefined,
+        stateId: stateId || undefined,
+        assigneeId: assigneeId || undefined,
+        priority,
+        labelIds,
+        ensureLabelNames: ensureLabelNames.length > 0 ? ensureLabelNames : undefined,
+        projectId: projectId || undefined
+      }
       const created = await window.sully.createLinearIssue(input)
       useApp.getState().pushToast('success', `${created.identifier} created`)
       onClose()
@@ -384,13 +400,32 @@ export default function NewTicketDialog({ onClose }: { onClose: () => void }): R
       <header className="hairline flex flex-col gap-3 border-b px-6 py-4">
         <div>
           <p className="font-mono text-[11px] uppercase tracking-[0.18em] text-brass-400">
-            new ticket
+            {localOnly ? 'new local ticket' : 'new ticket'}
           </p>
           <h3 className="mt-0.5 font-display text-[19px] text-ink-50">
             {title.trim() || 'untitled'}
           </h3>
         </div>
         <div className="flex items-center gap-3 self-end">
+          <button
+            type="button"
+            onClick={() => setLocalOnly((v) => !v)}
+            className={cn(
+              'hairline-strong flex items-center gap-1.5 rounded-lg border px-2 py-1 text-[11px]',
+              localOnly ? 'border-brass-500 text-brass-300' : 'text-ink-300 hover:text-ink-50'
+            )}
+            title="Keep this ticket in Sully only — no Linear issue is created"
+          >
+            <span
+              className={cn(
+                'flex h-3 w-3 items-center justify-center rounded-sm border',
+                localOnly ? 'border-brass-400 bg-brass-500/20' : 'border-ink-400'
+              )}
+            >
+              {localOnly && <Check size={9} />}
+            </span>
+            Local only
+          </button>
           <DockControls />
           <button onClick={onClose} className="text-ink-300 hover:text-ink-50">
             <X size={17} />
@@ -400,16 +435,18 @@ export default function NewTicketDialog({ onClose }: { onClose: () => void }): R
 
       <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto px-6 py-4">
         <div className="grid grid-cols-3 gap-3">
-          <Field label="Team">
-            <FilterDropdown
-              options={teams.map((t) => ({ key: t.id, label: t.name }))}
-              selected={new Set([teamId])}
-              onPick={setTeamId}
-              triggerLabel={teams.find((t) => t.id === teamId)?.name ?? '…'}
-            />
-          </Field>
+          {!localOnly && (
+            <Field label="Team">
+              <FilterDropdown
+                options={teams.map((t) => ({ key: t.id, label: t.name }))}
+                selected={new Set([teamId])}
+                onPick={setTeamId}
+                triggerLabel={teams.find((t) => t.id === teamId)?.name ?? '…'}
+              />
+            </Field>
+          )}
           {repos.length > 0 && (
-            <Field label="Target repo">
+            <Field label={localOnly ? 'Target repo (required)' : 'Target repo'}>
               <FilterDropdown
                 options={repos.map((r) => ({ key: r.id, label: r.label }))}
                 selected={new Set([repoId])}
@@ -418,19 +455,21 @@ export default function NewTicketDialog({ onClose }: { onClose: () => void }): R
               />
             </Field>
           )}
-          <Field label="Status">
-            <FilterDropdown
-              options={(meta?.states ?? []).map((s) => ({
-                key: s.id,
-                label: s.name,
-                color: s.color
-              }))}
-              selected={new Set([stateId])}
-              onPick={setStateId}
-              triggerLabel={meta?.states.find((s) => s.id === stateId)?.name ?? '…'}
-              disabled={!meta}
-            />
-          </Field>
+          {!localOnly && (
+            <Field label="Status">
+              <FilterDropdown
+                options={(meta?.states ?? []).map((s) => ({
+                  key: s.id,
+                  label: s.name,
+                  color: s.color
+                }))}
+                selected={new Set([stateId])}
+                onPick={setStateId}
+                triggerLabel={meta?.states.find((s) => s.id === stateId)?.name ?? '…'}
+                disabled={!meta}
+              />
+            </Field>
+          )}
         </div>
 
         <Field label="Title">
@@ -453,12 +492,12 @@ export default function NewTicketDialog({ onClose }: { onClose: () => void }): R
           />
         </Field>
 
-        {!meta && !metaError && (
+        {!localOnly && !meta && !metaError && (
           <span className="flex items-center gap-1.5 py-1 text-[11px] text-brass-300">
             <Vu /> loading team metadata…
           </span>
         )}
-        {metaError && (
+        {!localOnly && metaError && (
           <div className="flex items-center gap-2.5">
             <p className="text-[11.5px] text-terra-400">{metaError}</p>
             <Button onClick={() => setMetaAttempt((a) => a + 1)}>
@@ -466,8 +505,13 @@ export default function NewTicketDialog({ onClose }: { onClose: () => void }): R
             </Button>
           </div>
         )}
+        {localOnly && repos.length === 0 && (
+          <p className="text-[11.5px] text-terra-400">
+            Local tickets need a target repo — add one in Settings → Repos first.
+          </p>
+        )}
 
-        {meta && (
+        {!localOnly && meta && (
           <div className="grid grid-cols-2 gap-3 xl:grid-cols-4">
             <Field label="Priority">
               <FilterDropdown

@@ -29,6 +29,7 @@ import {
   Square,
   SquareTerminal,
   ThumbsUp,
+  Trash2,
   TriangleAlert,
   X
 } from 'lucide-react'
@@ -1459,7 +1460,54 @@ function TicketDetailsDialog({
   /** PR or Linear page shown in the in-dialog browser pane */
   const [browserUrl, setBrowserUrl] = useState<string | null>(null)
   const [menuOpen, setMenuOpen] = useState(false)
+  // deleting a local ticket is destructive (stops any running session) — the
+  // button arms on first click and deletes on the second
+  const [confirmDelete, setConfirmDelete] = useState(false)
+  // "Attach PR": associate an existing GitHub PR with a local ticket
+  const [attachOpen, setAttachOpen] = useState(false)
+  const [attachUrl, setAttachUrl] = useState('')
+  const [attaching, setAttaching] = useState(false)
+  // local tickets are edited here — there is no Linear page to edit them on
+  const [editOpen, setEditOpen] = useState(false)
+  const [editTitle, setEditTitle] = useState('')
+  const [editDesc, setEditDesc] = useState('')
+  const [saving, setSaving] = useState(false)
   const localChanges = useLocalChanges(issue)
+
+  const openEdit = (): void => {
+    setEditTitle(issue.title)
+    setEditDesc(issue.description ?? '')
+    setEditOpen(true)
+  }
+
+  const saveEdit = async (): Promise<void> => {
+    if (!editTitle.trim() || saving) return
+    setSaving(true)
+    const ok = await call(
+      window.sully.updateLocalIssue(issue.issueId, {
+        title: editTitle.trim(),
+        description: editDesc
+      }),
+      `${issue.identifier} updated`
+    )
+    setSaving(false)
+    if (ok) setEditOpen(false)
+  }
+
+  const attach = async (): Promise<void> => {
+    const url = attachUrl.trim()
+    if (!url || attaching) return
+    setAttaching(true)
+    const ok = await call(
+      window.sully.attachPr(issue.issueId, url),
+      `${issue.identifier} PR attached`
+    )
+    setAttaching(false)
+    if (ok) {
+      setAttachOpen(false)
+      setAttachUrl('')
+    }
+  }
   const actions = cardActions({
     issue,
     session,
@@ -1522,21 +1570,53 @@ function TicketDetailsDialog({
       <BrowserDock url={browserUrl} onClose={() => setBrowserUrl(null)}>
         <TerminalDock issueId={issue.issueId} open={termOpen && Boolean(issue.repoPath)}>
           <div className="selectable min-h-0 flex-1 overflow-y-auto px-6 py-4 text-[13px]">
-            <div className="prose-plan">
-              {description ? (
-                <ReactMarkdown components={paneLinkComponents(setBrowserUrl)}>
-                  {description}
-                </ReactMarkdown>
-              ) : (
-                <p className="italic">No description.</p>
-              )}
-            </div>
+            {editOpen ? (
+              <div className="flex flex-col gap-2">
+                <input
+                  autoFocus
+                  value={editTitle}
+                  onChange={(e) => setEditTitle(e.target.value)}
+                  placeholder="Title"
+                  className="hairline-strong selectable rounded-lg border bg-ink-950 px-2.5 py-1.5 text-[12px] text-ink-50 placeholder:text-ink-400 focus:border-brass-500 focus:outline-none"
+                />
+                <textarea
+                  value={editDesc}
+                  onChange={(e) => setEditDesc(e.target.value)}
+                  spellCheck={false}
+                  placeholder="Description (markdown)"
+                  className="hairline-strong selectable min-h-[180px] resize-y rounded-lg border bg-ink-950 px-2.5 py-1.5 font-mono text-[12px] leading-relaxed text-ink-50 placeholder:text-ink-400 focus:border-brass-500 focus:outline-none"
+                />
+                <div className="flex justify-end gap-2">
+                  <Button onClick={() => setEditOpen(false)}>Cancel</Button>
+                  <Button
+                    variant="primary"
+                    disabled={!editTitle.trim() || saving}
+                    onClick={() => void saveEdit()}
+                  >
+                    {saving ? 'Saving…' : 'Save'}
+                  </Button>
+                </div>
+              </div>
+            ) : (
+              <div className="prose-plan">
+                {description ? (
+                  <ReactMarkdown components={paneLinkComponents(setBrowserUrl)}>
+                    {description}
+                  </ReactMarkdown>
+                ) : (
+                  <p className="italic">No description.</p>
+                )}
+              </div>
+            )}
             {/* keyed so switching tickets in a docked panel resets the list and composer */}
-            <TicketComments
-              key={issue.issueId}
-              issueId={issue.issueId}
-              onOpenLink={setBrowserUrl}
-            />
+            {/* local tickets have no Linear issue to hold comments */}
+            {!issue.local && (
+              <TicketComments
+                key={issue.issueId}
+                issueId={issue.issueId}
+                onOpenLink={setBrowserUrl}
+              />
+            )}
             <FigmaComments
               key={`figma-${issue.issueId}`}
               issue={issue}
@@ -1546,7 +1626,8 @@ function TicketDetailsDialog({
         </TerminalDock>
       </BrowserDock>
 
-      <footer className="hairline flex items-center justify-end gap-2 border-t px-6 py-3.5">
+      <footer className="hairline flex flex-wrap items-center justify-end gap-2 border-t px-6 py-3.5">
+        <Button onClick={onClose}>Close</Button>
         {issue.repoPath && (
           <Button
             onClick={() => setTermOpen(!termOpen)}
@@ -1555,16 +1636,69 @@ function TicketDetailsDialog({
             <SquareTerminal size={12} /> {termOpen ? 'Hide terminal' : 'Terminal'}
           </Button>
         )}
-        <Button onClick={onClose}>Close</Button>
         <CommitPushButton issue={issue} localChanges={localChanges} />
         {issue.prUrl && (
           <Button onClick={() => setBrowserUrl(issue.prUrl!)}>
             <GitPullRequest size={12} /> Open pull request
           </Button>
         )}
-        <Button variant="primary" onClick={() => setBrowserUrl(issue.url)}>
-          <ExternalLink size={12} /> Open in Linear
-        </Button>
+        {issue.local && !editOpen && (
+          <Button onClick={openEdit} title="Edit this local ticket's title and description">
+            <Pencil size={12} /> Edit
+          </Button>
+        )}
+        {issue.local &&
+          !issue.prUrl &&
+          (attachOpen ? (
+            <div className="flex items-center gap-1.5">
+              <input
+                autoFocus
+                value={attachUrl}
+                onChange={(e) => setAttachUrl(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') void attach()
+                  if (e.key === 'Escape') setAttachOpen(false)
+                }}
+                placeholder="https://github.com/…/pull/123"
+                spellCheck={false}
+                className="hairline-strong selectable w-[240px] rounded-lg border bg-ink-950 px-2.5 py-1.5 text-[12px] text-ink-50 placeholder:text-ink-400 focus:border-brass-500 focus:outline-none"
+              />
+              <Button disabled={!attachUrl.trim() || attaching} onClick={() => void attach()}>
+                {attaching ? 'Attaching…' : 'Attach'}
+              </Button>
+            </div>
+          ) : (
+            <Button
+              onClick={() => setAttachOpen(true)}
+              title="Associate an existing GitHub PR with this ticket — it moves to In review and CI/review/auto-merge apply"
+            >
+              <GitPullRequest size={12} /> Attach PR
+            </Button>
+          ))}
+        {issue.local ? (
+          <Button
+            onClick={() => {
+              if (!confirmDelete) {
+                setConfirmDelete(true)
+                return
+              }
+              void call(window.sully.deleteLocalIssue(issue.issueId))
+              onClose()
+            }}
+            title={
+              confirmDelete
+                ? 'Click again to delete — any running session is stopped; the worktree stays on disk'
+                : 'Remove this local ticket from the board'
+            }
+          >
+            <Trash2 size={12} className={cn(confirmDelete && 'text-terra-400')} />
+            {confirmDelete ? 'Really delete?' : 'Delete ticket'}
+          </Button>
+        ) : (
+          <Button variant="primary" onClick={() => setBrowserUrl(issue.url)}>
+            <ExternalLink size={12} /> Open in Linear
+          </Button>
+        )}
       </footer>
     </DockablePanel>
   )
@@ -1741,12 +1875,24 @@ function IssueCard({
       )}
     >
       <div className="flex items-center gap-2">
-        <button
-          className="shrink-0 font-mono text-[11px] font-medium text-brass-300 hover:underline"
-          onClick={() => useApp.getState().openBrowser(issue.url)}
-        >
-          {issue.identifier}
-        </button>
+        {issue.local ? (
+          <span
+            className="shrink-0 font-mono text-[11px] font-medium text-brass-300"
+            title="Local ticket — exists only in Sully, not in Linear"
+          >
+            {issue.identifier}
+            <span className="ml-1 rounded bg-ink-700 px-1 py-px text-[9px] uppercase tracking-wide text-ink-300">
+              local
+            </span>
+          </span>
+        ) : (
+          <button
+            className="shrink-0 font-mono text-[11px] font-medium text-brass-300 hover:underline"
+            onClick={() => useApp.getState().openBrowser(issue.url)}
+          >
+            {issue.identifier}
+          </button>
+        )}
         {repoName ? (
           <span className="min-w-0 truncate rounded bg-ink-700 px-1.5 py-px font-mono text-[10px] text-ink-200">
             {repoName}
@@ -2251,7 +2397,8 @@ export default function BoardView(): ReactElement {
     settings?.repoMappings.find((r) => r.repoPath === issue.repoPath)?.devCommand?.trim() ||
     undefined
 
-  if (mapped === 0) {
+  // local tickets don't need a Linear column mapping — show the board for them
+  if (mapped === 0 && list.length === 0) {
     return (
       <EmptyState
         title="No columns mapped yet."

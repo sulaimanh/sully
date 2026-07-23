@@ -157,6 +157,20 @@ export async function prForBranch(
   }
 }
 
+/** Resolve a PR by its URL — used to attach an existing PR to a ticket. */
+export async function prByUrl(
+  repoPath: string,
+  url: string
+): Promise<{ url: string; state: string; headRefName: string } | null> {
+  try {
+    const out = await gh(['pr', 'view', url, '--json', 'url,state,headRefName'], repoPath)
+    const pr = JSON.parse(out)
+    return pr?.url && pr?.headRefName ? pr : null
+  } catch {
+    return null
+  }
+}
+
 export interface PrCheckFailure {
   name: string
   link?: string

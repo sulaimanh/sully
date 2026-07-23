@@ -1,3 +1,4 @@
+import { randomUUID } from 'crypto'
 import { EventEmitter } from 'events'
 import * as fs from 'fs'
 import * as os from 'os'
@@ -5,6 +6,7 @@ import * as path from 'path'
 import type {
   BoardColumn,
   ColumnMapping,
+  CreateLocalIssueInput,
   FigmaCommentItem,
   GhReviewItem,
   PhaseConfig,
@@ -20,6 +22,7 @@ import {
   FEEDBACK_REPLY_FILE_REL,
   PLAN_FILE_REL,
   PLAN_QUESTIONS_FILE_REL,
+  TICKET_FILE_REL,
   buildCodingCommand,
   buildCodingResumeCommand,
   buildCommitPushCommand,
@@ -43,6 +46,7 @@ import {
   createPr,
   failedRunLogs,
   mergePr,
+  prByUrl,
   prChecks,
   prForBranch,
   prReviewComments,
@@ -147,6 +151,39 @@ function parsePlanQuestions(raw: string): PlanQuestion[] | null {
 
 type ColumnKind = BoardColumn
 
+// Local-only tickets have no Linear state behind them — stateId carries the
+// board column as a 'local:<column>' token so retry/persistence work unchanged.
+const LOCAL_STATE_PREFIX = 'local:'
+const LOCAL_STATE_NAMES: Record<ColumnKind, string> = {
+  uncategorized: 'Uncategorized',
+  planning: 'Planning',
+  planReady: 'Plan ready',
+  inProgress: 'In progress',
+  inReview: 'In review'
+}
+
+function setLocalColumn(issue: TrackedIssue, column: ColumnKind): void {
+  issue.stateId = `${LOCAL_STATE_PREFIX}${column}`
+  issue.stateName = LOCAL_STATE_NAMES[column]
+}
+
+function localColumnOf(issue: TrackedIssue): ColumnKind | null {
+  if (!issue.stateId.startsWith(LOCAL_STATE_PREFIX)) return null
+  const key = issue.stateId.slice(LOCAL_STATE_PREFIX.length)
+  return key in LOCAL_STATE_NAMES ? (key as ColumnKind) : null
+}
+
+/** Linear normally supplies branchName; local tickets generate one from the title. */
+function localBranchName(seq: number, title: string): string {
+  const slug = title
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 40)
+    .replace(/-+$/, '')
+  return slug ? `sully/loc-${seq}-${slug}` : `sully/loc-${seq}`
+}
+
 /**
  * Linear-driven state machine. Linear columns are the *trigger*; local state is
  * the *dedupe*. Every post-session step (move, PR create) checks before acting,
@@ -222,6 +259,10 @@ export class Orchestrator extends EventEmitter {
     this.polling = true
     try {
       const settings = settingsStore.get()
+      // local tickets don't come from Linear — give them the same poll-driven
+      // retries (concurrency-cap re-dispatch, CI watching) processIssue gives
+      // Linear tickets, and do it even when no Linear team is mapped at all
+      await this.dispatchLocalIssues()
       // Polling is always on so the board reflects Linear truth; the enabled
       // toggle only gates ACTIONS (spawning, moving tickets, posting comments).
       if (settings.columnMappings.length === 0) return
@@ -251,6 +292,7 @@ export class Orchestrator extends EventEmitter {
 
       // tracked issues that left all mapped columns: done/canceled/unassigned
       for (const tracked of this.store.all()) {
+        if (tracked.local) continue // never in the Linear fetch — removal is explicit or on PR merge
         if (seen.has(tracked.issueId) || this.busy.has(tracked.issueId)) continue
         if (tracked.activeSessionId) {
           // killing a running session is destructive and easy to trigger from
@@ -274,6 +316,153 @@ export class Orchestrator extends EventEmitter {
       this.polling = false
       this.scheduleNext()
     }
+  }
+
+  // ---------- local-only tickets ----------
+
+  /**
+   * The poll-driven dispatch for local tickets — the counterpart of what
+   * processIssue does for Linear ones: re-attempt sessions deferred by
+   * concurrency caps and keep CI/review status fresh while in review.
+   */
+  private async dispatchLocalIssues(): Promise<void> {
+    const act = settingsStore.get().orchestrator.enabled
+    for (const issue of this.store.all()) {
+      if (!issue.local || issue.activeSessionId || this.busy.has(issue.issueId)) continue
+      try {
+        // an agent may have associated an existing PR by editing the worktree
+        // ticket file — that's the write-back channel for local tickets
+        if (!issue.prUrl) {
+          const filePr = this.ticketFilePr(issue)
+          if (filePr) {
+            await this.attachPr(issue.issueId, filePr)
+            continue // in review now; CI status arrives on the next poll
+          }
+        }
+        if (issue.phase === 'planning') await this.startPlanning(issue)
+        else if (issue.phase === 'coding') await this.startCoding(issue)
+        else if (issue.phase === 'in_review') await this.checkCiAutoFix(issue, act)
+      } catch (err) {
+        this.fail(issue.issueId, (err as Error).message)
+      }
+    }
+  }
+
+  /**
+   * Associate an existing GitHub PR with a local ticket. All PR machinery
+   * (CI watching, review comments, auto-merge, merged-removal) is keyed by
+   * branch, so the ticket adopts the PR's head branch and moves to review.
+   */
+  async attachPr(issueId: string, url: string): Promise<void> {
+    const issue = this.store.get(issueId)
+    if (!issue) return
+    if (!issue.local)
+      throw new Error(
+        'Attach PR is for local tickets — Linear tickets pick up the PR on their branch automatically'
+      )
+    if (issue.activeSessionId)
+      throw new Error('a session is running for this ticket — stop it before attaching a PR')
+    if (!issue.repoPath) throw new Error('no repo mapped for this ticket')
+    const trimmed = url.trim()
+    if (!/^https:\/\/github\.com\/[^/\s]+\/[^/\s]+\/pull\/\d+/.test(trimmed))
+      throw new Error('that does not look like a GitHub PR URL')
+    const pr = await prByUrl(issue.repoPath, trimmed)
+    if (!pr) throw new Error('could not resolve that PR with gh — check the URL and gh auth')
+
+    this.busy.add(issueId)
+    try {
+      issue.prUrl = pr.url
+      if (issue.branchName !== pr.headRefName) {
+        issue.branchName = pr.headRefName
+        // the old worktree belongs to the generated branch — future sessions
+        // (review follow-ups) re-derive one for the PR's branch
+        issue.worktreePath = undefined
+      }
+      // anything cached before the attach describes the wrong branch
+      issue.ciStatus = undefined
+      issue.ciFixAttemptShas = undefined
+      issue.prReview = undefined
+      issue.ghReviewItems = undefined
+      issue.phase = 'in_review'
+      setLocalColumn(issue, 'inReview')
+      issue.lastError = undefined
+      this.save(issue)
+      this.emit('notify', {
+        title: `${issue.identifier} PR attached`,
+        body: pr.url,
+        view: 'board'
+      })
+    } finally {
+      this.busy.delete(issueId)
+    }
+    this.pollNow() // pick up CI/review status (or merged-removal) right away
+  }
+
+  /** The worktree ticket file's PR line — set by an agent to associate an existing PR. */
+  private ticketFilePr(issue: TrackedIssue): string | null {
+    const wt = this.worktreePathFor(issue)
+    if (!wt) return null
+    try {
+      const text = fs.readFileSync(path.join(wt, TICKET_FILE_REL), 'utf8')
+      const m = /^-\s*PR:\s*(https:\/\/github\.com\/\S+\/pull\/\d+)\s*$/m.exec(text)
+      return m ? m[1] : null
+    } catch {
+      return null
+    }
+  }
+
+  /** Create a ticket that lives only in Sully — no Linear issue behind it. */
+  async createLocalIssue(input: CreateLocalIssueInput): Promise<TrackedIssue> {
+    const title = input.title.trim()
+    if (!title) throw new Error('a local ticket needs a title')
+    const repo = settingsStore.get().repoMappings.find((r) => r.id === input.repoId)
+    if (!repo) throw new Error('a local ticket needs a target repo — pick one in the dialog')
+
+    const seq = this.store.nextLocalSeq()
+    const issue: TrackedIssue = {
+      issueId: `local-${randomUUID()}`,
+      identifier: `LOC-${seq}`,
+      title,
+      description: input.description?.trim() || undefined,
+      url: '',
+      teamId: '',
+      branchName: localBranchName(seq, title),
+      stateId: '',
+      stateName: '',
+      local: true,
+      // new local tickets park in the dead column — planning is an explicit
+      // choice (drag the card to Planning), not a side effect of creating it
+      phase: 'uncategorized',
+      repoPath: repo.repoPath,
+      updatedAt: new Date().toISOString()
+    }
+    setLocalColumn(issue, 'uncategorized')
+    this.save(issue)
+    return issue
+  }
+
+  /** Edit a local ticket's title/description — Linear tickets are edited in Linear. */
+  async updateLocalIssue(
+    issueId: string,
+    patch: { title?: string; description?: string }
+  ): Promise<void> {
+    const issue = this.store.get(issueId)
+    if (!issue?.local) return
+    const title = patch.title?.trim()
+    if (title) issue.title = title
+    if (patch.description !== undefined) issue.description = patch.description.trim() || undefined
+    this.save(issue)
+    // keep the worktree context in sync so agents see the edited ticket
+    this.writeTicketFile(issue)
+  }
+
+  /** Local tickets never leave the board via the Linear poll — deletion is explicit. */
+  async deleteLocalIssue(issueId: string): Promise<void> {
+    const issue = this.store.get(issueId)
+    if (!issue?.local) return
+    if (issue.activeSessionId) await processManager.stop(issue.activeSessionId)
+    this.store.remove(issueId)
+    this.emit('issueRemoved', issueId)
   }
 
   private mappingFor(teamId: string): ColumnMapping | undefined {
@@ -590,6 +779,7 @@ export class Orchestrator extends EventEmitter {
 
   /** Legacy: plans used to be posted as Linear comments — read-only fallback now. */
   private async findPlanComment(issueId: string): Promise<string | null> {
+    if (issueId.startsWith('local-')) return null // no Linear issue to have comments
     try {
       const comments = await fetchIssueComments(issueId)
       const markers = [PLAN_MARKER(issueId), LEGACY_PLAN_MARKER(issueId)]
@@ -652,7 +842,7 @@ export class Orchestrator extends EventEmitter {
 
     this.busy.add(issue.issueId)
     try {
-      issue.worktreePath = await ensureWorktree(issue.repoPath, issue.branchName)
+      issue.worktreePath = await this.ensureIssueWorktree(issue)
       // questions from a previous run must not be mistaken for this session's
       fs.rmSync(path.join(issue.worktreePath, PLAN_QUESTIONS_FILE_REL), { force: true })
       // retries and re-plans resume the prior planning conversation when its
@@ -749,9 +939,11 @@ export class Orchestrator extends EventEmitter {
       issue.planBody = planText
       issue.planQuestions = undefined // answered (or superseded) once a plan exists
 
-      const mapping = this.mappingFor(issue.teamId)
+      const mapping = issue.local ? undefined : this.mappingFor(issue.teamId)
       if (mapping) {
         await this.moveIfStillIn(issue, [mapping.planningStateId], mapping.planReadyStateId)
+      } else if (issue.local) {
+        setLocalColumn(issue, 'planReady')
       }
       issue.phase = 'plan_ready'
       // plan feedback resumes the planning conversation — it already holds the
@@ -794,7 +986,7 @@ export class Orchestrator extends EventEmitter {
     const settings = settingsStore.get()
     this.busy.add(issue.issueId)
     try {
-      issue.worktreePath = await ensureWorktree(issue.repoPath, issue.branchName)
+      issue.worktreePath = await this.ensureIssueWorktree(issue)
       // consumed — a leftover file must not re-park the ticket after this round
       fs.rmSync(path.join(issue.worktreePath, PLAN_QUESTIONS_FILE_REL), { force: true })
       const resumeId =
@@ -837,7 +1029,7 @@ export class Orchestrator extends EventEmitter {
     try {
       // the file is the source of truth — make sure there is a worktree to hold it
       if (issue.repoPath && !issue.worktreePath)
-        issue.worktreePath = await ensureWorktree(issue.repoPath, issue.branchName)
+        issue.worktreePath = await this.ensureIssueWorktree(issue)
       issue.planBody = planText.trim()
       this.writePlanFile(issue, planText.trim())
       this.save(issue)
@@ -855,8 +1047,8 @@ export class Orchestrator extends EventEmitter {
   async rewritePlan(issueId: string, instructions?: string): Promise<void> {
     const issue = this.store.get(issueId)
     if (!issue || issue.phase !== 'plan_ready' || issue.activeSessionId || !issue.repoPath) return
-    const mapping = this.mappingFor(issue.teamId)
-    if (!mapping) return
+    const mapping = issue.local ? undefined : this.mappingFor(issue.teamId)
+    if (!issue.local && !mapping) return
     // stale plan state must not survive a rewrite, and clearing the
     // conversation id forces startPlanning down the fresh-session path
     issue.planBody = undefined
@@ -869,7 +1061,9 @@ export class Orchestrator extends EventEmitter {
     issue.lastError = undefined
     // card back to Planning so the questions flow, plan-ready move, and retry
     // all behave exactly like a normal planning run
-    await this.moveIfStillIn(issue, [mapping.planReadyStateId], mapping.planningStateId)
+    if (mapping)
+      await this.moveIfStillIn(issue, [mapping.planReadyStateId], mapping.planningStateId)
+    else setLocalColumn(issue, 'planning')
     this.save(issue)
     await this.startPlanning(issue, true) // explicit user action
   }
@@ -889,7 +1083,7 @@ export class Orchestrator extends EventEmitter {
 
     this.busy.add(issue.issueId)
     try {
-      issue.worktreePath = await ensureWorktree(issue.repoPath, issue.branchName)
+      issue.worktreePath = await this.ensureIssueWorktree(issue)
       await this.restorePlanFile(issue)
       // stale reply from a previous run must not be mistaken for this session's
       fs.rmSync(path.join(issue.worktreePath, FEEDBACK_REPLY_FILE_REL), { force: true })
@@ -998,6 +1192,50 @@ export class Orchestrator extends EventEmitter {
     fs.writeFileSync(planFile, planText)
   }
 
+  /**
+   * Ticket metadata in the worktree, so any agent working there (especially
+   * the interactive terminal, which gets no per-session prompt) can see what
+   * ticket it's on. For local tickets the PR line doubles as a write-back
+   * channel: an agent sets it to a PR URL and the poll adopts it (attachPr).
+   */
+  private writeTicketFile(issue: TrackedIssue): void {
+    if (!issue.worktreePath || !fs.existsSync(issue.worktreePath)) return
+    const lines = [
+      `# ${issue.identifier} — ${issue.title}`,
+      '',
+      issue.local
+        ? `- Ticket: ${issue.identifier} (local to Sully — this ticket does NOT exist in Linear; never search Linear for it)`
+        : `- Ticket: ${issue.identifier} — ${issue.url}`,
+      `- Branch: ${issue.branchName}`,
+      `- PR: ${issue.prUrl ?? '(none)'}`,
+      ''
+    ]
+    if (issue.local && !issue.prUrl) {
+      lines.push(
+        'To associate an existing GitHub PR with this ticket, replace the PR line above with the PR URL — Sully adopts it within a poll cycle.',
+        ''
+      )
+    }
+    lines.push('## Description', '', issue.description?.trim() || '(none)', '')
+    const file = path.join(issue.worktreePath, TICKET_FILE_REL)
+    fs.mkdirSync(path.dirname(file), { recursive: true })
+    fs.writeFileSync(file, lines.join('\n'))
+  }
+
+  /** Refresh the worktree ticket file for flows outside the orchestrator (agent terminal). */
+  syncTicketFile(issueId: string): void {
+    const issue = this.store.get(issueId)
+    if (issue) this.writeTicketFile(issue)
+  }
+
+  /** Every session's worktree setup: create/reuse the worktree and refresh the ticket file. */
+  private async ensureIssueWorktree(issue: TrackedIssue): Promise<string> {
+    if (!issue.repoPath) throw new Error('no repo mapped for this ticket')
+    issue.worktreePath = await ensureWorktree(issue.repoPath, issue.branchName)
+    this.writeTicketFile(issue)
+    return issue.worktreePath
+  }
+
   // ---------- reprompting after review ----------
 
   /** User reprompted the agent from the app (explicit action — works with automation off). */
@@ -1023,6 +1261,19 @@ export class Orchestrator extends EventEmitter {
     const checks = await prChecks(issue.repoPath, issue.branchName)
     if (!checks) return
     if (checks.state !== 'OPEN') {
+      // a merged PR is a local ticket's "Done" — there is no Linear state to
+      // move it to, so it leaves the board the way Linear tickets do on Done.
+      // A closed-unmerged PR keeps the card around for a manual delete/retry.
+      if (issue.local && checks.state === 'MERGED') {
+        this.store.remove(issue.issueId)
+        this.emit('issueRemoved', issue.issueId)
+        this.emit('notify', {
+          title: `${issue.identifier} merged`,
+          body: 'PR merged — local ticket removed from the board.',
+          view: 'board'
+        })
+        return
+      }
       // merged/closed mid-loop — nothing left to watch
       if (issue.ciStatus || issue.ciFixAttemptShas || issue.prReview || issue.ghReviewItems) {
         issue.ciStatus = undefined
@@ -1259,7 +1510,7 @@ export class Orchestrator extends EventEmitter {
           have.add(l.fileKey)
         }
       }
-      if (opts?.rescanComments) {
+      if (opts?.rescanComments && !issue.local) {
         const comments = await fetchIssueComments(issue.issueId)
         for (const c of comments) {
           for (const l of parseFigmaLinks(c.body, 'comment')) {
@@ -1447,7 +1698,7 @@ export class Orchestrator extends EventEmitter {
 
     this.busy.add(issue.issueId)
     try {
-      issue.worktreePath = await ensureWorktree(issue.repoPath, issue.branchName)
+      issue.worktreePath = await this.ensureIssueWorktree(issue)
       await this.restorePlanFile(issue)
       // stale reply from a previous run must not be mistaken for this session's
       fs.rmSync(path.join(issue.worktreePath, FEEDBACK_REPLY_FILE_REL), { force: true })
@@ -1560,8 +1811,8 @@ export class Orchestrator extends EventEmitter {
   async approvePlan(issueId: string): Promise<void> {
     const issue = this.store.get(issueId)
     if (!issue || issue.phase !== 'plan_ready') return
-    const mapping = this.mappingFor(issue.teamId)
-    if (!mapping) return
+    const mapping = issue.local ? undefined : this.mappingFor(issue.teamId)
+    if (!issue.local && !mapping) return
     // approval supersedes an in-flight feedback session — detach it first so
     // its finish handler can't touch the plan mid-coding
     if (issue.activeSessionId) {
@@ -1573,8 +1824,12 @@ export class Orchestrator extends EventEmitter {
     }
     this.busy.add(issueId)
     try {
-      await moveIssue(issueId, mapping.inProgressStateId)
-      issue.stateId = mapping.inProgressStateId
+      if (mapping) {
+        await moveIssue(issueId, mapping.inProgressStateId)
+        issue.stateId = mapping.inProgressStateId
+      } else {
+        setLocalColumn(issue, 'inProgress')
+      }
       issue.phase = 'coding'
       this.save(issue)
     } finally {
@@ -1592,7 +1847,7 @@ export class Orchestrator extends EventEmitter {
 
     this.busy.add(issue.issueId)
     try {
-      issue.worktreePath = await ensureWorktree(issue.repoPath, issue.branchName)
+      issue.worktreePath = await this.ensureIssueWorktree(issue)
 
       // make sure the plan file exists in the worktree (restore from Linear if needed)
       await this.restorePlanFile(issue)
@@ -1696,7 +1951,7 @@ export class Orchestrator extends EventEmitter {
           issue.worktreePath,
           issue.branchName,
           `${issue.identifier}: ${issue.title}`,
-          `Implements ${issue.url}\n\nPlan: see Linear comment.`,
+          issue.url ? `Implements ${issue.url}` : `Implements ${issue.identifier}: ${issue.title}`,
           settingsStore.get().draftPrs,
           this.baseBranchFor(issue)
         )
@@ -1720,9 +1975,11 @@ export class Orchestrator extends EventEmitter {
     this.busy.add(issue.issueId)
     try {
       issue.prUrl = prUrl
-      const mapping = this.mappingFor(issue.teamId)
+      const mapping = issue.local ? undefined : this.mappingFor(issue.teamId)
       if (mapping) {
         await this.moveIfStillIn(issue, [mapping.inProgressStateId], mapping.inReviewStateId)
+      } else if (issue.local) {
+        setLocalColumn(issue, 'inReview')
       }
       issue.phase = 'in_review'
       issue.lastError = undefined
@@ -1858,9 +2115,14 @@ export class Orchestrator extends EventEmitter {
   async retry(issueId: string): Promise<void> {
     const issue = this.store.get(issueId)
     if (!issue || issue.activeSessionId) return
-    const mapping = this.mappingFor(issue.teamId)
-    if (!mapping) return
-    const column = this.columnKind(issue.stateId, mapping)
+    let column: ColumnKind | null
+    if (issue.local) {
+      column = localColumnOf(issue)
+    } else {
+      const mapping = this.mappingFor(issue.teamId)
+      if (!mapping) return
+      column = this.columnKind(issue.stateId, mapping)
+    }
     issue.lastError = undefined
     // the plan file on disk is the source of truth — a cleared or clobbered
     // cache must not force a re-plan while the plan still exists
@@ -1895,6 +2157,10 @@ export class Orchestrator extends EventEmitter {
   async moveToColumn(issueId: string, column: ColumnKind): Promise<void> {
     const issue = this.store.get(issueId)
     if (!issue) return
+    if (issue.local) {
+      await this.moveLocalToColumn(issue, column)
+      return
+    }
     const mapping = this.mappingFor(issue.teamId)
     if (!mapping) throw new Error('no column mapping for this ticket’s team')
     const stateId = this.stateIdForColumn(mapping, column)
@@ -1905,6 +2171,60 @@ export class Orchestrator extends EventEmitter {
     if (stateId === issue.stateId) return
     await moveIssue(issueId, stateId)
     this.pollNow()
+  }
+
+  /**
+   * Drag handler for local tickets: no Linear to write, so this applies the
+   * same transitions processIssue would derive from a Linear drag, directly.
+   */
+  private async moveLocalToColumn(issue: TrackedIssue, column: ColumnKind): Promise<void> {
+    if (localColumnOf(issue) === column) return
+    if (issue.activeSessionId)
+      throw new Error('a session is running for this ticket — stop it before moving the card')
+
+    issue.lastError = undefined
+    setLocalColumn(issue, column)
+    switch (column) {
+      case 'planning':
+        // explicit re-plan request: a new plan means any old plan state and
+        // coding attempt are stale (same reset as the Linear backward drag)
+        issue.planBody = undefined
+        issue.planQuestions = undefined
+        issue.codingSessionId = undefined
+        issue.phase = 'planning'
+        this.save(issue)
+        await this.startPlanning(issue, true) // explicit user action
+        break
+      case 'planReady':
+        // dragging a questions card here means "skip the questions, proceed
+        // as-is"; the plan file is the source of truth if one exists
+        issue.phase = 'plan_ready'
+        issue.planQuestions = undefined
+        issue.planBody = this.readPlanFile(issue) ?? issue.planBody
+        this.save(issue)
+        break
+      case 'inProgress':
+        if (!issue.planBody) issue.planBody = this.readPlanFile(issue) ?? undefined
+        if (!issue.planBody) {
+          issue.phase = 'error'
+          issue.lastError =
+            'No plan found for this ticket — move it to the planning column first, or retry to code without a plan.'
+          this.save(issue)
+          return
+        }
+        issue.phase = 'coding'
+        this.save(issue)
+        await this.startCoding(issue, true) // explicit user action
+        break
+      case 'inReview':
+        issue.phase = 'in_review'
+        this.save(issue)
+        break
+      case 'uncategorized':
+        issue.phase = 'uncategorized'
+        this.save(issue)
+        break
+    }
   }
 }
 

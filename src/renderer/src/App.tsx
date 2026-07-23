@@ -13,6 +13,7 @@ import {
   PanelLeftClose,
   PanelLeftOpen
 } from 'lucide-react'
+import type { AppSettings } from '@shared/types'
 import { call, useApp, sessionList, type View } from './store'
 import { Toggle, Vu } from './lib/ui'
 import { cn } from './lib/utils'
@@ -118,6 +119,12 @@ export default function App(): ReactElement {
 
   const runningCount = sessionList(sessions).filter((s) => s.status === 'running').length
   const reviewingCount = reviews.filter((r) => r.status === 'reviewing').length
+
+  const saveOrchestrator = (patch: Partial<AppSettings['orchestrator']>): void => {
+    const next = { ...settings, orchestrator: { ...settings.orchestrator, ...patch } }
+    applySettings(next)
+    void call(window.sully.setSettings(next))
+  }
 
   return (
     <div className="atmosphere flex h-full flex-col">
@@ -261,6 +268,24 @@ export default function App(): ReactElement {
                   label="Auto reviews"
                 />
               </span>
+              <span
+                title={`Auto-fix failing CI: ${settings.orchestrator.ciAutoFix ? 'on' : 'off'}`}
+              >
+                <Toggle
+                  checked={settings.orchestrator.ciAutoFix}
+                  onChange={(v) => saveOrchestrator({ ciAutoFix: v })}
+                  label="Auto-fix failing CI"
+                />
+              </span>
+              <span
+                title={`Auto-merge approved PRs: ${settings.orchestrator.autoMergeOnApproval ? 'on' : 'off'}`}
+              >
+                <Toggle
+                  checked={settings.orchestrator.autoMergeOnApproval}
+                  onChange={(v) => saveOrchestrator({ autoMergeOnApproval: v })}
+                  label="Auto-merge approved PRs"
+                />
+              </span>
             </div>
           )}
           {sidebarExpanded && (
@@ -285,6 +310,34 @@ export default function App(): ReactElement {
                   checked={settings.prWatcher.enabled}
                   onChange={(v) => void call(window.sully.reviewsSetEnabled(v))}
                   label="Auto reviews"
+                />
+              </div>
+              <div
+                className="hairline flex items-center justify-between border-t pt-2.5"
+                title="When a ticket's PR checks fail, resume the coding session with the failure logs, push a fix, and re-check — up to the attempt cap"
+              >
+                <div>
+                  <p className="text-[12px] font-bold text-ink-100">Auto-fix CI</p>
+                  <p className="text-[10.5px] text-ink-400">retry failing PR checks</p>
+                </div>
+                <Toggle
+                  checked={settings.orchestrator.ciAutoFix}
+                  onChange={(v) => saveOrchestrator({ ciAutoFix: v })}
+                  label="Auto-fix failing CI"
+                />
+              </div>
+              <div
+                className="hairline flex items-center justify-between border-t pt-2.5"
+                title="When a ticket's PR is approved and CI is green, squash-merge it automatically and delete the branch"
+              >
+                <div>
+                  <p className="text-[12px] font-bold text-ink-100">Auto-merge</p>
+                  <p className="text-[10.5px] text-ink-400">approved PRs, green CI</p>
+                </div>
+                <Toggle
+                  checked={settings.orchestrator.autoMergeOnApproval}
+                  onChange={(v) => saveOrchestrator({ autoMergeOnApproval: v })}
+                  label="Auto-merge approved PRs"
                 />
               </div>
             </div>

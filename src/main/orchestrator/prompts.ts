@@ -11,6 +11,8 @@ import { subsetMcpConfigFile } from '../mcp'
 export const PLAN_FILE_REL = '.sully/plan.md'
 export const FEEDBACK_REPLY_FILE_REL = '.sully/feedback-reply.md'
 export const PLAN_QUESTIONS_FILE_REL = '.sully/questions.json'
+/** Ticket metadata written into every worktree so any agent can see what it's working on. */
+export const TICKET_FILE_REL = '.sully/ticket.md'
 
 // Planning sessions run headless, so the agent can't ask interactively. This
 // contract gives it an escape hatch: stop and write questions instead of
@@ -96,12 +98,19 @@ function historyBlock(history: ChatMessage[] | undefined): string {
 function ticketContext(issue: TrackedIssue, description: string | undefined): string {
   return [
     `Ticket: ${issue.identifier} — ${issue.title}`,
-    `Ticket URL: ${issue.url}`,
+    issue.url
+      ? `Ticket URL: ${issue.url}`
+      : 'Local ticket — exists only in Sully, there is no Linear issue for it.',
     `Branch: ${issue.branchName} (already checked out in this worktree)`,
     description ? `\nTicket description:\n${description}` : ''
   ]
     .filter(Boolean)
     .join('\n')
+}
+
+/** "ENG-123 (https://…)" for Linear tickets, plain "LOC-4" for local ones. */
+function ticketRef(issue: TrackedIssue): string {
+  return issue.url ? `${issue.identifier} (${issue.url})` : issue.identifier
 }
 
 export function buildPlanningCommand(
@@ -299,12 +308,12 @@ export function buildCodingCommand(
     'Run fully non-interactively: never ask questions or wait for confirmation.'
 
   if (config.agent === 'codex') {
-    const prompt = `Implement the approved plan at ${PLAN_FILE_REL} for ticket ${issue.identifier} (${issue.url}). Follow the plan closely and verify your work (typecheck/lint/tests where available). ${finish}\n${nonInteractive}`
+    const prompt = `Implement the approved plan at ${PLAN_FILE_REL} for ticket ${ticketRef(issue)}. Follow the plan closely and verify your work (typecheck/lint/tests where available). ${finish}\n${nonInteractive}`
     return codexArgs(config, prompt, worktreePath)
   }
 
   const lead = config.skill ? `${config.skill}\n\n` : ''
-  const prompt = `${lead}Implement the approved plan at ${PLAN_FILE_REL} for ticket ${issue.identifier} (${issue.url}). Follow the plan closely and verify your work (typecheck/lint/tests where available).\n${finish}\n${nonInteractive}`
+  const prompt = `${lead}Implement the approved plan at ${PLAN_FILE_REL} for ticket ${ticketRef(issue)}. Follow the plan closely and verify your work (typecheck/lint/tests where available).\n${finish}\n${nonInteractive}`
   return claudeArgs(config, prompt)
 }
 
@@ -339,7 +348,7 @@ export function buildCreatePrCommand(
   // repo default — the diff would be wrong and inflated
   const baseFlag = baseBranch ? ` --base ${baseBranch}` : ''
   const baseNote = baseBranch ? ` against the "${baseBranch}" base branch` : ''
-  const builtin = `Ship the implemented work in this worktree as a pull request: review the changes, commit them in logical commits with clear messages, push the branch "${issue.branchName}" to origin, and create a GitHub pull request${baseNote} titled "${prTitle}" with a clear description that links ${issue.url}. Use the gh CLI (gh pr create${baseFlag}).${draftNote}`
+  const builtin = `Ship the implemented work in this worktree as a pull request: review the changes, commit them in logical commits with clear messages, push the branch "${issue.branchName}" to origin, and create a GitHub pull request${baseNote} titled "${prTitle}" with a clear description${issue.url ? ` that links ${issue.url}` : ''}. Use the gh CLI (gh pr create${baseFlag}).${draftNote}`
   const nonInteractive =
     'Run fully non-interactively: never ask questions or wait for confirmation.'
 
@@ -348,7 +357,7 @@ export function buildCreatePrCommand(
   }
 
   const prompt = config.skill
-    ? `${config.skill} ${PLAN_FILE_REL}\n\nTicket: ${prTitle}\nTicket URL: ${issue.url}\nBranch: ${issue.branchName} (already checked out in this worktree)\nPlan file: ${PLAN_FILE_REL}\n${baseBranch ? `Base branch: open the PR against "${baseBranch}".\n` : ''}${draftNote ? `${draftNote.trim()}\n` : ''}${nonInteractive}`
+    ? `${config.skill} ${PLAN_FILE_REL}\n\nTicket: ${prTitle}\n${issue.url ? `Ticket URL: ${issue.url}` : 'Local ticket — no Linear issue to link.'}\nBranch: ${issue.branchName} (already checked out in this worktree)\nPlan file: ${PLAN_FILE_REL}\n${baseBranch ? `Base branch: open the PR against "${baseBranch}".\n` : ''}${draftNote ? `${draftNote.trim()}\n` : ''}${nonInteractive}`
     : `${builtin}\n${nonInteractive}`
   return claudeArgs(config, prompt)
 }
@@ -363,7 +372,7 @@ export function buildCommitPushCommand(
   issue: TrackedIssue,
   worktreePath: string
 ): string[] {
-  const builtin = `This worktree for ticket ${issue.identifier} (${issue.url}) has uncommitted local changes. Review them (git status, git diff), commit them in logical commits with clear messages, and push the branch "${issue.branchName}" to origin. ${SYNC_BRANCH(issue.branchName)} Never commit the .sully directory. Do NOT open a pull request.`
+  const builtin = `This worktree for ticket ${ticketRef(issue)} has uncommitted local changes. Review them (git status, git diff), commit them in logical commits with clear messages, and push the branch "${issue.branchName}" to origin. ${SYNC_BRANCH(issue.branchName)} Never commit the .sully directory. Do NOT open a pull request.`
   const nonInteractive =
     'Run fully non-interactively: never ask questions or wait for confirmation.'
 
