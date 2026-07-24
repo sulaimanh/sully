@@ -85,6 +85,7 @@ function saveBrowserTabs(tabs: BrowserTab[], activeId: string): void {
 const initialBrowser = loadBrowserTabs()
 
 const SIDEBAR_COLLAPSED_KEY = 'sully.sidebarCollapsed'
+const DONE_COLLAPSED_KEY = 'sully.doneColumnCollapsed'
 
 interface AppState {
   loaded: boolean
@@ -114,6 +115,8 @@ interface AppState {
   confirmQuitOpen: boolean
   /** sidebar is collapsed to the icon rail (hover still expands it) */
   sidebarCollapsed: boolean
+  /** the board's Done column is collapsed to a slim rail (default on) */
+  doneColumnCollapsed: boolean
   /** the keyboard-shortcuts modal is showing */
   shortcutsOpen: boolean
   /** id of the surface expanded to full screen (a DockablePanel id, or 'terminal'); null = none */
@@ -140,6 +143,7 @@ interface AppState {
   openLog: (sessionId: string) => void
   closeLog: () => void
   toggleSidebar: () => void
+  toggleDoneColumn: () => void
   setShortcutsOpen: (open: boolean) => void
   /** expand a surface to full screen, or restore when passed null */
   setFullscreen: (id: string | null) => void
@@ -190,6 +194,8 @@ export const useApp = create<AppState>((set, get) => ({
   activeBrowserTabId: initialBrowser.activeId,
   confirmQuitOpen: false,
   sidebarCollapsed: localStorage.getItem(SIDEBAR_COLLAPSED_KEY) === '1',
+  // Done starts collapsed so the board stays focused on active work
+  doneColumnCollapsed: localStorage.getItem(DONE_COLLAPSED_KEY) !== '0',
   shortcutsOpen: false,
   fullscreen: null,
   detailsIssueId: null,
@@ -223,6 +229,13 @@ export const useApp = create<AppState>((set, get) => ({
       const sidebarCollapsed = !st.sidebarCollapsed
       localStorage.setItem(SIDEBAR_COLLAPSED_KEY, sidebarCollapsed ? '1' : '0')
       return { sidebarCollapsed }
+    }),
+
+  toggleDoneColumn: () =>
+    set((st) => {
+      const doneColumnCollapsed = !st.doneColumnCollapsed
+      localStorage.setItem(DONE_COLLAPSED_KEY, doneColumnCollapsed ? '1' : '0')
+      return { doneColumnCollapsed }
     }),
 
   setShortcutsOpen: (shortcutsOpen) => set({ shortcutsOpen }),

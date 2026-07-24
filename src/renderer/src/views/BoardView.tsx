@@ -9,6 +9,8 @@ import {
 } from 'react'
 import ReactMarkdown, { type Components } from 'react-markdown'
 import {
+  ChevronDown,
+  ChevronUp,
   CircleCheck,
   CircleHelp,
   Copy,
@@ -2344,7 +2346,9 @@ export default function BoardView(): ReactElement {
     openLog,
     closeLog,
     repromptIssueId,
-    setRepromptIssue
+    setRepromptIssue,
+    doneColumnCollapsed,
+    toggleDoneColumn
   } = useApp()
   // the open ticket-details panel lives in the store so it survives view switches
   const detailsFor = detailsIssueId ? (issues[detailsIssueId] ?? null) : null
@@ -2409,6 +2413,14 @@ export default function BoardView(): ReactElement {
   const deployRunning = Object.values(deploys).some((d) => d.status === 'running')
 
   const list = useMemo(() => issueList(issues), [issues])
+  // completed tickets live in their own read-only column, newest first
+  const doneItems = useMemo(
+    () =>
+      list
+        .filter((i) => i.phase === 'done')
+        .sort((a, b) => (b.doneAt ?? '').localeCompare(a.doneAt ?? '')),
+    [list]
+  )
   const mapped = settings?.columnMappings.length ?? 0
 
   const sessionFor = (issue: TrackedIssue): Session | undefined => {
@@ -2558,6 +2570,62 @@ export default function BoardView(): ReactElement {
             </section>
           )
         })}
+
+        {doneColumnCollapsed ? (
+          <button
+            type="button"
+            onClick={toggleDoneColumn}
+            title="Show done tickets"
+            className="hairline flex h-fit min-w-0 items-center gap-2 self-start rounded-xl border px-2.5 py-2.5 text-left transition-colors hover:bg-ink-800/40"
+          >
+            <span className="h-1.5 w-1.5 rounded-full bg-sage-500" />
+            <h2 className="text-[12px] font-bold uppercase tracking-wider text-ink-200">Done</h2>
+            <span className="font-mono text-[10.5px] text-ink-400">{doneItems.length}</span>
+            <ChevronDown size={14} className="ml-auto text-ink-400" />
+          </button>
+        ) : (
+          <section className="hairline flex min-w-0 flex-col rounded-xl border p-2.5">
+            <header className="mb-2.5 flex items-center gap-2 px-1">
+              <span className="h-1.5 w-1.5 rounded-full bg-sage-500" />
+              <h2 className="text-[12px] font-bold uppercase tracking-wider text-ink-200">Done</h2>
+              <span className="font-mono text-[10.5px] text-ink-400">{doneItems.length}</span>
+              <button
+                type="button"
+                onClick={toggleDoneColumn}
+                title="Collapse"
+                className="ml-auto text-ink-400 transition-colors hover:text-ink-100"
+              >
+                <ChevronUp size={14} />
+              </button>
+            </header>
+            <div className="flex min-h-[120px] flex-1 flex-col gap-2.5">
+              {doneItems.length === 0 ? (
+                <p className="px-1 py-3 font-display text-[13px] text-ink-400/70">
+                  finished in the past week
+                </p>
+              ) : (
+                doneItems.map((issue) => (
+                  <IssueCard
+                    key={issue.issueId}
+                    issue={issue}
+                    session={sessionFor(issue)}
+                    devServer={devServers[issue.issueId]}
+                    devCommand={devCommandFor(issue)}
+                    onViewDetails={() => setDetailsIssue(issue.issueId)}
+                    onViewPlan={() => setPlanFor(issue)}
+                    onViewLog={() => {
+                      const s = sessionFor(issue)
+                      if (s) openLog(s.id)
+                    }}
+                    onReprompt={() => setRepromptIssue(issue.issueId)}
+                    onViewGhReview={() => setGhReviewFor(issue)}
+                    onAnswerQuestions={() => setQuestionsFor(issue)}
+                  />
+                ))
+              )}
+            </div>
+          </section>
+        )}
       </div>
 
       <p className="mt-8 flex items-center gap-1.5 text-[11px] text-ink-400">

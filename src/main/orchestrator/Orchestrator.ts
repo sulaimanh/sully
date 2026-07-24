@@ -36,6 +36,7 @@ import {
   buildRepromptResumeCommand
 } from './prompts'
 import {
+  fetchCompletedIssues,
   fetchIssueComments,
   fetchIssueState,
   fetchIssuesInStates,
@@ -150,6 +151,9 @@ function parsePlanQuestions(raw: string): PlanQuestion[] | null {
 }
 
 type ColumnKind = BoardColumn
+
+/** How long a completed ticket lingers in the Done column before it drops off the board. */
+const DONE_WINDOW_MS = 7 * 24 * 60 * 60 * 1000
 
 // Local-only tickets have no Linear state behind them — stateId carries the
 // board column as a 'local:<column>' token so retry/persistence work unchanged.
@@ -290,8 +294,37 @@ export class Orchestrator extends EventEmitter {
         }
       }
 
-      // tracked issues that left all mapped columns: done/canceled/unassigned
+      // recently-completed tickets feed the read-only Done column. Adopting
+      // them here (and marking them seen) keeps the cleanup loop below from
+      // treating a just-completed ticket as "left the board".
+      try {
+        const doneSince = new Date(Date.now() - DONE_WINDOW_MS).toISOString()
+        const doneNodes = await fetchCompletedIssues(
+          settings.columnMappings.map((m) => m.teamId),
+          doneSince,
+          settings.orchestrator.requiredLabel
+        )
+        for (const node of doneNodes) {
+          seen.add(node.id)
+          if (this.busy.has(node.id)) continue
+          this.adoptDone(node)
+        }
+      } catch (err) {
+        this.emit('pollError', (err as Error).message)
+      }
+
+      // tracked issues that left all mapped columns: canceled/unassigned, or a
+      // completed ticket that has aged out of the Done window
       for (const tracked of this.store.all()) {
+        if (tracked.phase === 'done') {
+          // done cards self-expire after a week (local ones are handled in
+          // dispatchLocalIssues); until then they stay put, never removed here
+          if (!tracked.local && this.doneExpired(tracked)) {
+            this.store.remove(tracked.issueId)
+            this.emit('issueRemoved', tracked.issueId)
+          }
+          continue
+        }
         if (tracked.local) continue // never in the Linear fetch — removal is explicit or on PR merge
         if (seen.has(tracked.issueId) || this.busy.has(tracked.issueId)) continue
         if (tracked.activeSessionId) {
@@ -328,7 +361,16 @@ export class Orchestrator extends EventEmitter {
   private async dispatchLocalIssues(): Promise<void> {
     const act = settingsStore.get().orchestrator.enabled
     for (const issue of this.store.all()) {
-      if (!issue.local || issue.activeSessionId || this.busy.has(issue.issueId)) continue
+      if (!issue.local) continue
+      if (issue.phase === 'done') {
+        // a merged local ticket lingers in Done for a week, then drops off
+        if (this.doneExpired(issue)) {
+          this.store.remove(issue.issueId)
+          this.emit('issueRemoved', issue.issueId)
+        }
+        continue
+      }
+      if (issue.activeSessionId || this.busy.has(issue.issueId)) continue
       try {
         // an agent may have associated an existing PR by editing the worktree
         // ticket file — that's the write-back channel for local tickets
@@ -535,6 +577,28 @@ export class Orchestrator extends EventEmitter {
     this.emit('issueUpdated', { ...issue })
   }
 
+  /**
+   * Pull a completed ticket into the read-only Done column. Keeps any work
+   * we already tracked (repo, PR, chat) and just flips the phase, so a ticket
+   * that flows in_review → Done carries its history into the column.
+   */
+  private adoptDone(node: LinearIssueNode): void {
+    const issue = this.store.get(node.id) ?? this.toTracked(node, 'done')
+    issue.phase = 'done'
+    issue.doneAt = node.completedAt ?? issue.doneAt ?? new Date().toISOString()
+    issue.stateId = node.state.id
+    issue.stateName = node.state.name
+    issue.activeSessionId = undefined
+    this.save(issue)
+  }
+
+  /** True once a done ticket has aged past the Done window and should leave the board. */
+  private doneExpired(issue: TrackedIssue): boolean {
+    const at = issue.doneAt ? Date.parse(issue.doneAt) : NaN
+    if (Number.isNaN(at)) return false // no timestamp yet — keep it until we learn one
+    return Date.now() - at > DONE_WINDOW_MS
+  }
+
   /** In-app conversation thread — capped so state stays small. */
   private appendChat(issue: TrackedIssue, role: 'user' | 'agent', text: string): void {
     issue.chat = [...(issue.chat ?? []), { role, text, at: new Date().toISOString() }].slice(-50)
@@ -563,6 +627,13 @@ export class Orchestrator extends EventEmitter {
 
     const local = this.store.get(node.id)
     if (!local) {
+      await this.discoverIssue(node, mapping, column)
+      return
+    }
+
+    // a completed ticket reopened back into an active column: re-adopt it as a
+    // fresh discovery so it re-enters the right phase instead of clinging to 'done'
+    if (local.phase === 'done') {
       await this.discoverIssue(node, mapping, column)
       return
     }
@@ -1261,15 +1332,21 @@ export class Orchestrator extends EventEmitter {
     const checks = await prChecks(issue.repoPath, issue.branchName)
     if (!checks) return
     if (checks.state !== 'OPEN') {
-      // a merged PR is a local ticket's "Done" — there is no Linear state to
-      // move it to, so it leaves the board the way Linear tickets do on Done.
+      // a merged PR is a local ticket's "Done" — there is no Linear state
+      // behind it, so we stamp doneAt and drop it in the Done column, where it
+      // lives for a week like a completed Linear ticket.
       // A closed-unmerged PR keeps the card around for a manual delete/retry.
       if (issue.local && checks.state === 'MERGED') {
-        this.store.remove(issue.issueId)
-        this.emit('issueRemoved', issue.issueId)
+        issue.phase = 'done'
+        issue.doneAt = new Date().toISOString()
+        issue.ciStatus = undefined
+        issue.ciFixAttemptShas = undefined
+        issue.prReview = undefined
+        issue.ghReviewItems = undefined
+        this.save(issue)
         this.emit('notify', {
           title: `${issue.identifier} merged`,
-          body: 'PR merged — local ticket removed from the board.',
+          body: 'PR merged — moved to Done.',
           view: 'board'
         })
         return

@@ -19,6 +19,8 @@ export interface LinearIssueNode {
   url: string
   branchName: string
   updatedAt: string
+  /** set only for completed issues (the Done-column fetch); undefined otherwise */
+  completedAt?: string
   team: { id: string; key: string }
   project?: { id: string; name: string }
   state: { id: string; name: string }
@@ -78,6 +80,44 @@ export async function fetchIssuesInStates(
       }
     }`,
     label ? { stateIds, label } : { stateIds }
+  )
+  return data.issues.nodes
+}
+
+/**
+ * Recently-completed tickets for the Done column. Any workflow state of type
+ * "completed" counts (no per-team mapping needed), scoped to the viewer's own
+ * issues and bounded by `since` so the column self-expires after a week.
+ */
+export async function fetchCompletedIssues(
+  teamIds: string[],
+  since: string,
+  requiredLabel?: string
+): Promise<LinearIssueNode[]> {
+  if (teamIds.length === 0) return []
+  const label = requiredLabel?.trim()
+  const labelFilter = label ? ', labels: { some: { name: { eqIgnoreCase: $label } } }' : ''
+  const data = await linearRequest<{ issues: { nodes: LinearIssueNode[] } }>(
+    `query CompletedIssues($teamIds: [ID!], $since: DateTimeOrDuration!${label ? ', $label: String!' : ''}) {
+      issues(
+        filter: {
+          team: { id: { in: $teamIds } }
+          state: { type: { eq: "completed" } }
+          assignee: { isMe: { eq: true } }
+          completedAt: { gt: $since }${labelFilter}
+        }
+        first: 100
+      ) {
+        nodes {
+          id identifier title description url branchName updatedAt completedAt
+          team { id key }
+          project { id name }
+          state { id name }
+          labels { nodes { name } }
+        }
+      }
+    }`,
+    label ? { teamIds, since, label } : { teamIds, since }
   )
   return data.issues.nodes
 }

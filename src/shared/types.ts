@@ -20,6 +20,7 @@ export type IssuePhase =
   | 'coding' // coding session running or queued
   | 'reprompting' // post-review follow-up session running (comment or in-app reprompt)
   | 'in_review' // PR created, ticket moved to review column
+  | 'done' // completed / merged — shown in the Done column for a week, then drops off
   | 'error' // last session failed; waiting for retry
 
 /** A board column a card can be dragged to — resolves to a Linear state via ColumnMapping. */
@@ -269,6 +270,8 @@ export interface TrackedIssue {
   ciFixAttemptShas?: string[]
   /** PR review decision, refreshed alongside ciStatus. 'none' = repo requires no reviews */
   prReview?: 'approved' | 'changes_requested' | 'review_required' | 'none'
+  /** when the ticket was completed (Linear completedAt) / its PR merged — drives the Done column and its 1-week expiry */
+  doneAt?: string
   updatedAt: string
 }
 
