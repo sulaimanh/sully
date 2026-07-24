@@ -297,6 +297,7 @@ export class Orchestrator extends EventEmitter {
       // recently-completed tickets feed the read-only Done column. Adopting
       // them here (and marking them seen) keeps the cleanup loop below from
       // treating a just-completed ticket as "left the board".
+      let doneFetchOk = true
       try {
         const doneSince = new Date(Date.now() - DONE_WINDOW_MS).toISOString()
         const doneNodes = await fetchCompletedIssues(
@@ -310,39 +311,44 @@ export class Orchestrator extends EventEmitter {
           this.adoptDone(node)
         }
       } catch (err) {
+        // couldn't confirm which tickets just completed — skip the removal sweep
+        // below so a transient Linear error can't drop a ticket (and its cached
+        // plan/PR) before it gets adopted into Done on a later poll
+        doneFetchOk = false
         this.emit('pollError', (err as Error).message)
       }
 
       // tracked issues that left all mapped columns: canceled/unassigned, or a
       // completed ticket that has aged out of the Done window
-      for (const tracked of this.store.all()) {
-        if (tracked.phase === 'done') {
-          // done cards self-expire after a week (local ones are handled in
-          // dispatchLocalIssues); until then they stay put, never removed here
-          if (!tracked.local && this.doneExpired(tracked)) {
-            this.store.remove(tracked.issueId)
-            this.emit('issueRemoved', tracked.issueId)
+      if (doneFetchOk)
+        for (const tracked of this.store.all()) {
+          if (tracked.phase === 'done') {
+            // done cards self-expire after a week (local ones are handled in
+            // dispatchLocalIssues); until then they stay put, never removed here
+            if (!tracked.local && this.doneExpired(tracked)) {
+              this.store.remove(tracked.issueId)
+              this.emit('issueRemoved', tracked.issueId)
+            }
+            continue
           }
-          continue
-        }
-        if (tracked.local) continue // never in the Linear fetch — removal is explicit or on PR merge
-        if (seen.has(tracked.issueId) || this.busy.has(tracked.issueId)) continue
-        if (tracked.activeSessionId) {
-          // killing a running session is destructive and easy to trigger from
-          // Linear (move to Done, unassign, drop the label) — never do it silently
-          const active = processManager.get(tracked.activeSessionId)
-          await processManager.stop(tracked.activeSessionId)
-          if (active?.status === 'running') {
-            this.emit('notify', {
-              title: `${tracked.identifier} left the board`,
-              body: 'Its running session was stopped (the ticket left all mapped columns). Any uncommitted work is still in the worktree.',
-              view: 'sessions'
-            })
+          if (tracked.local) continue // never in the Linear fetch — removal is explicit or on PR merge
+          if (seen.has(tracked.issueId) || this.busy.has(tracked.issueId)) continue
+          if (tracked.activeSessionId) {
+            // killing a running session is destructive and easy to trigger from
+            // Linear (move to Done, unassign, drop the label) — never do it silently
+            const active = processManager.get(tracked.activeSessionId)
+            await processManager.stop(tracked.activeSessionId)
+            if (active?.status === 'running') {
+              this.emit('notify', {
+                title: `${tracked.identifier} left the board`,
+                body: 'Its running session was stopped (the ticket left all mapped columns). Any uncommitted work is still in the worktree.',
+                view: 'sessions'
+              })
+            }
           }
+          this.store.remove(tracked.issueId)
+          this.emit('issueRemoved', tracked.issueId)
         }
-        this.store.remove(tracked.issueId)
-        this.emit('issueRemoved', tracked.issueId)
-      }
     } catch (err) {
       this.emit('pollError', (err as Error).message)
     } finally {
